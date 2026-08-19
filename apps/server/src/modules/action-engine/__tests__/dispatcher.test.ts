@@ -9,6 +9,7 @@ function ctx(): ActionContext {
   return {
     ruleId: "rule-1",
     ruleName: "Test Rule",
+    ownerId: "owner-1",
     event: {
       schemaVersion: 1,
       id: "event-1",

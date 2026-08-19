@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Database } from "./db.js";
 import { eventsLog, streamSessions } from "./schema.js";
 
@@ -11,9 +11,10 @@ export interface RecentEventRow {
 }
 
 export interface EventsRepository {
-  createStreamSession(tiktokUsername: string): Promise<string>;
+  createStreamSession(ownerId: string, tiktokUsername: string): Promise<string>;
   recordEvent(event: import("@tiktok-live/shared-types").LiveEvent, streamSessionId: string | null): Promise<void>;
-  getRecent(limit: number): Promise<RecentEventRow[]>;
+  /** Chỉ trả event thuộc các stream_sessions của `ownerId` — cách ly theo tài khoản (multi-tenant). */
+  getRecent(ownerId: string, limit: number): Promise<RecentEventRow[]>;
 }
 
 /**
@@ -25,10 +26,10 @@ export interface EventsRepository {
  */
 export function createEventsRepository(db: Database): EventsRepository {
   return {
-    async createStreamSession(tiktokUsername: string): Promise<string> {
+    async createStreamSession(ownerId: string, tiktokUsername: string): Promise<string> {
       const [row] = await db
         .insert(streamSessions)
-        .values({ tiktokUsername, status: "connecting", startedAt: new Date() })
+        .values({ ownerId, tiktokUsername, status: "connecting", startedAt: new Date() })
         .returning({ id: streamSessions.id });
       return row.id;
     },
@@ -45,15 +46,21 @@ export function createEventsRepository(db: Database): EventsRepository {
       });
     },
 
-    async getRecent(limit: number): Promise<RecentEventRow[]> {
-      const rows = await db.select().from(eventsLog).orderBy(desc(eventsLog.receivedAt)).limit(limit);
-      return rows.map((r) => ({
-        id: r.id,
-        type: r.type,
-        username: r.username,
-        payload: r.payload,
-        receivedAt: r.receivedAt.toISOString(),
-      }));
+    async getRecent(ownerId: string, limit: number): Promise<RecentEventRow[]> {
+      const rows = await db
+        .select({
+          id: eventsLog.id,
+          type: eventsLog.type,
+          username: eventsLog.username,
+          payload: eventsLog.payload,
+          receivedAt: eventsLog.receivedAt,
+        })
+        .from(eventsLog)
+        .innerJoin(streamSessions, eq(eventsLog.streamSessionId, streamSessions.id))
+        .where(eq(streamSessions.ownerId, ownerId))
+        .orderBy(desc(eventsLog.receivedAt))
+        .limit(limit);
+      return rows.map((r) => ({ ...r, receivedAt: r.receivedAt.toISOString() }));
     },
   };
 }

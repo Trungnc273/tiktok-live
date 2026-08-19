@@ -40,7 +40,7 @@ describe("OBS scene change action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "t", eventId: "e1", actions: [{ type: "obs.sceneChange", payload: { sceneName: "Gift Scene" } }] },
-      { ruleId: "r1", ruleName: "t", event: giftEvent() },
+      { ruleId: "r1", ruleName: "t", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("success");
@@ -55,7 +55,7 @@ describe("OBS scene change action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "t", eventId: "e1", actions: [{ type: "obs.sceneChange", payload: {} }] },
-      { ruleId: "r1", ruleName: "t", event: giftEvent() },
+      { ruleId: "r1", ruleName: "t", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");
@@ -68,7 +68,7 @@ describe("OBS scene change action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "t", eventId: "e1", actions: [{ type: "obs.sceneChange", payload: { sceneName: "X" } }] },
-      { ruleId: "r1", ruleName: "t", event: giftEvent() },
+      { ruleId: "r1", ruleName: "t", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");

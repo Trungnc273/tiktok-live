@@ -30,8 +30,10 @@ const soundsDir = join(
  * qua OverlayGateway thật (M08/M09) -> client Socket.IO thật nhận URL -> fetch
  * URL đó qua HTTP thật, xác nhận file audio thật được phục vụ (không phải 404).
  */
+const OWNER_ID = "owner-1";
+
 describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)", () => {
-  let httpApp: ReturnType<typeof createHttpServer>;
+  let httpApp: Awaited<ReturnType<typeof createHttpServer>>;
   let gateway: OverlayGateway;
   let tokenStore: TokenStore;
   let publicBaseUrl: string;
@@ -41,14 +43,20 @@ describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)"
   beforeAll(async () => {
     mediaDir = await mkdtemp(join(tmpdir(), "tiktok-live-media-"));
     tokenStore = new TokenStore();
-    httpApp = createHttpServer({ tokenStore, publicBaseUrl: "http://placeholder", mediaDir, soundsDir });
+    httpApp = await createHttpServer({
+      tokenStore,
+      publicBaseUrl: "http://placeholder",
+      mediaDir,
+      soundsDir,
+      jwtSecret: "test-secret",
+    });
     await httpApp.listen({ port: 0, host: "127.0.0.1" });
     const port = (httpApp.server.address() as AddressInfo).port;
     publicBaseUrl = `http://127.0.0.1:${port}`;
 
-    gateway = new OverlayGateway(httpApp.server, tokenStore);
+    gateway = new OverlayGateway(httpApp.server, tokenStore, () => null);
 
-    const token = tokenStore.issue();
+    const token = tokenStore.issue(OWNER_ID);
     client = ioClient(`${publicBaseUrl}/overlay`, { path: "/socket.io", query: { token } });
     await new Promise<void>((resolve) => client.on("connect", () => resolve()));
   });
@@ -66,7 +74,7 @@ describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)"
       createTTSActionHandler(provider, new TTSQueue(), {
         outputDir: mediaDir,
         onAudioReady: (filePath) => {
-          gateway.broadcast("ttsReady", { url: `${publicBaseUrl}/media/${basename(filePath)}` });
+          gateway.broadcast(OWNER_ID, "ttsReady", { url: `${publicBaseUrl}/media/${basename(filePath)}` });
         },
       }),
     );
@@ -76,7 +84,7 @@ describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)"
 
     await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "t", eventId: "e-tts-1", actions: [{ type: "tts", payload: { template: "Cảm ơn {username}!" } }] },
-      { ruleId: "r1", ruleName: "t", event: followEvent() },
+      { ruleId: "r1", ruleName: "t", ownerId: "owner-1", event: followEvent() },
     );
 
     const message = await received;
@@ -97,7 +105,7 @@ describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)"
       createSoundActionHandler({
         soundsDir,
         onSoundReady: (filePath) => {
-          gateway.broadcast("soundReady", { url: `${publicBaseUrl}/sounds/${basename(filePath)}` });
+          gateway.broadcast(OWNER_ID, "soundReady", { url: `${publicBaseUrl}/sounds/${basename(filePath)}` });
         },
       }),
     );
@@ -107,7 +115,7 @@ describe("M09: TTS/Sound -> OverlayGateway -> HTTP media (đầu-cuối thật)"
 
     await dispatcher.dispatch(
       { ruleId: "r2", ruleName: "t", eventId: "e-sound-1", actions: [{ type: "sound", payload: { file: "rose.mp3" } }] },
-      { ruleId: "r2", ruleName: "t", event: followEvent() },
+      { ruleId: "r2", ruleName: "t", ownerId: "owner-1", event: followEvent() },
     );
 
     const message = await received;

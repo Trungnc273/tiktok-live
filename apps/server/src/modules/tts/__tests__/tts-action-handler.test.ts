@@ -36,7 +36,7 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { template: "Cảm ơn {username} đã follow!" } }] },
-      { ruleId: "r1", ruleName: "test", event: followEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: followEvent() },
     );
 
     expect(outcomes[0].status).toBe("success");
@@ -54,7 +54,7 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { wrong: "field" } }] },
-      { ruleId: "r1", ruleName: "test", event: followEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: followEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");
@@ -70,7 +70,7 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { template: "hello {username}" } }] },
-      { ruleId: "r1", ruleName: "test", event: followEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: followEvent() },
     );
 
     // maxRetries=1 nghĩa là thử lại 1 lần -> failNext chỉ fail lần đầu -> lần retry thành công
@@ -86,7 +86,7 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { template: "hello {username}" } }] },
-      { ruleId: "r1", ruleName: "test", event: followEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: followEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");
@@ -102,7 +102,7 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { template: "hello {username}" } }] },
-      { ruleId: "r1", ruleName: "test", event: followEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: followEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");

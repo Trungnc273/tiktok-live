@@ -4,6 +4,8 @@ export interface ActionContext {
   event: LiveEvent;
   ruleId: string;
   ruleName: string;
+  /** Tài khoản nền tảng sở hữu rule này (multi-tenant) — handler dùng để biết phát overlay/audio cho đúng người. */
+  ownerId: string;
 }
 
 export type ExecutionStatus = "success" | "failed" | "timeout" | "skipped";

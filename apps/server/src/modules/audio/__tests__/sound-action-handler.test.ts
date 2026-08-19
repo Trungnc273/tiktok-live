@@ -30,7 +30,7 @@ describe("Sound action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "sound", payload: { file: "rose.mp3" } }] },
-      { ruleId: "r1", ruleName: "test", event: giftEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("success");
@@ -45,7 +45,7 @@ describe("Sound action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "sound", payload: { file: "missing.mp3" } }] },
-      { ruleId: "r1", ruleName: "test", event: giftEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");
@@ -59,7 +59,7 @@ describe("Sound action handler (qua ActionDispatcher)", () => {
 
     const outcomes = await dispatcher.dispatch(
       { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "sound", payload: { file: "rose.ogg" } }] },
-      { ruleId: "r1", ruleName: "test", event: giftEvent() },
+      { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: giftEvent() },
     );
 
     expect(outcomes[0].status).toBe("failed");
@@ -89,7 +89,7 @@ describe("Sound action handler (qua ActionDispatcher)", () => {
       Array.from({ length: 5 }, (_, i) =>
         dispatcher.dispatch(
           { ruleId: "r1", ruleName: "test", eventId: `event-${i}`, actions: [{ type: "sound", payload: { file: "rose.mp3" } }] },
-          { ruleId: "r1", ruleName: "test", event: { ...giftEvent(), id: `event-${i}` } },
+          { ruleId: "r1", ruleName: "test", ownerId: "owner-1", event: { ...giftEvent(), id: `event-${i}` } },
         ),
       ),
     );

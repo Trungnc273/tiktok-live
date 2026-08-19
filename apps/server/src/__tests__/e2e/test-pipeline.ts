@@ -44,6 +44,8 @@ export interface TestPipeline {
   cleanup: () => Promise<void>;
 }
 
+const OWNER_ID = "test-owner";
+
 export async function createTestPipeline(rules: AutomationRule[]): Promise<TestPipeline> {
   const provider = new MockProvider();
   const manager = new ConnectionManager(provider, { baseReconnectDelayMs: 20, maxReconnectDelayMs: 100 });
@@ -52,9 +54,9 @@ export async function createTestPipeline(rules: AutomationRule[]): Promise<TestP
   await new Promise<void>((resolve) => httpServer.listen(0, resolve));
   const port = (httpServer.address() as AddressInfo).port;
   const tokenStore = new TokenStore();
-  const gateway = new OverlayGateway(httpServer, tokenStore);
+  const gateway = new OverlayGateway(httpServer, tokenStore, () => null);
 
-  const token = tokenStore.issue();
+  const token = tokenStore.issue(OWNER_ID);
   const client = ioClient(`http://127.0.0.1:${port}/overlay`, { path: "/socket.io", query: { token } });
   await new Promise<void>((resolve) => client.on("connect", () => resolve()));
 
@@ -65,13 +67,13 @@ export async function createTestPipeline(rules: AutomationRule[]): Promise<TestP
   const registry = new HandlerRegistry();
   registry.register(
     createTTSActionHandler(ttsProvider, new TTSQueue(), {
-      onAudioReady: (filePath) => void gateway.broadcast("ttsReady", { url: filePath }),
+      onAudioReady: (filePath, ctx) => void gateway.broadcast(ctx.ownerId, "ttsReady", { url: filePath }),
     }),
   );
   registry.register(
     createSoundActionHandler({
       soundsDir: soundsFixtureDir,
-      onSoundReady: (filePath) => void gateway.broadcast("soundReady", { url: filePath }),
+      onSoundReady: (filePath, ctx) => void gateway.broadcast(ctx.ownerId, "soundReady", { url: filePath }),
     }),
   );
 
@@ -84,12 +86,12 @@ export async function createTestPipeline(rules: AutomationRule[]): Promise<TestP
     const result = normalizeAndValidate(rawEvent, "test-stream");
     if (!result.ok) return;
     liveEvents.push(result.event);
-    gateway.broadcast("liveEvent", result.event);
+    gateway.broadcast(OWNER_ID, "liveEvent", result.event);
 
     const matches = evaluateRules(rules, result.event);
     for (const match of matches) {
       void dispatcher
-        .dispatch(match, { ruleId: match.ruleId, ruleName: match.ruleName, event: result.event })
+        .dispatch(match, { ruleId: match.ruleId, ruleName: match.ruleName, ownerId: OWNER_ID, event: result.event })
         .then((o) => outcomes.push({ eventId: result.event.id, outcomes: o }));
     }
   });

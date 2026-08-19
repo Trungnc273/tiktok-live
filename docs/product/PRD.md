@@ -86,11 +86,13 @@ MVP phục vụ **1 streamer, 1 phiên live tại một thời điểm**, chạy
 - **Phase 2** (sau khi MVP ổn định qua PHASE 13/14/15): FR-7, FR-13, FR-15, FR-20, FR-21, FR-22, FR-27.
 - **Future** (không cam kết thời điểm): FR-8, FR-23, FR-28 và toàn bộ hướng SaaS đa người dùng — chỉ nên theo đuổi sau khi đã đánh giá lại rủi ro pháp lý/license (AGPL) và có phương án dự phòng nếu thư viện unofficial ngừng hoạt động.
 
+## Cập nhật phạm vi (sau MVP — theo yêu cầu người dùng ngày 2026-08-19)
+
+**Multi-tenant + Auth đã CHUYỂN vào scope, không còn Out-of-scope.** Người dùng xác nhận muốn chia sẻ nền tảng cho người quen dùng chung, **miễn phí** (không billing), đăng ký đơn giản email/mật khẩu (không xác minh email), người đăng ký đầu tiên tự động là admin. Đã triển khai: bảng `users`, JWT cookie auth, cách ly hoàn toàn theo `ownerId` (automations/stream_sessions/events/overlay/dashboard socket room), `LiveSessionManager` cho phép nhiều kết nối TikTok đồng thời (1/user). Rủi ro pháp lý (mục Risks bên dưới) do đó áp dụng cho **mọi user dùng chung nền tảng**, không chỉ 1 cá nhân — người dùng đã được thông báo rõ trước khi quyết định.
+
 ## Explicit out-of-scope (MVP)
 
-- Multi-tenant / nhiều streamer dùng chung 1 instance với tài khoản riêng.
-- Thu phí / billing / subscription.
-- Auth nhiều người dùng, phân quyền role.
+- Thu phí / billing / subscription (đã xác nhận: miễn phí, không cần Stripe).
 - SLA/uptime commitment dưới bất kỳ hình thức nào.
 - Hỗ trợ đồng thời nhiều phòng LIVE cùng lúc.
 - Game integration.

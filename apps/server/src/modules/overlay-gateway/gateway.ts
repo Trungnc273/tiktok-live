@@ -4,24 +4,35 @@ import type { OverlayMessage } from "@tiktok-live/shared-types";
 import type { TokenStore } from "./token-store.js";
 import { logger } from "../../config/logger.js";
 
+function overlayRoom(ownerId: string): string {
+  return `overlay:${ownerId}`;
+}
+function dashboardRoom(ownerId: string): string {
+  return `dashboard:${ownerId}`;
+}
+
 /**
- * OverlayGateway (docs/architecture/REALTIME-ARCHITECTURE.md — hoàn thiện ở M09):
+ * OverlayGateway — multi-tenant (bổ sung sau MVP): mỗi streamer (`ownerId`) có 1
+ * "phòng" (Socket.IO room) RIÊNG cho cả overlay lẫn dashboard. `broadcast()` giờ
+ * BẮT BUỘC truyền `ownerId` — không còn kiểu "phát cho mọi client" như bản MVP gốc,
+ * vì điều đó sẽ làm lộ dữ liệu (comment/gift...) của streamer này sang streamer khác.
  *
- *   Backend -> Socket.IO
- *               ├── namespace "/overlay"  (token-authenticated — URL có thể lộ qua OBS/screenshare)
- *               └── namespace "/dashboard" (MVP: tin tưởng theo local network, không bắt buộc token — xem ghi chú Security bên dưới)
- *
- * Reconnect + heartbeat dùng cơ chế có sẵn của Socket.IO (không tự viết lại).
- * Resync khi reconnect: server gửi ngay `sync` event kèm sequence hiện tại cho
- * client vừa connect, để SequenceGuard phía client không bị kẹt ở giá trị cũ.
+ * Namespace "/overlay": xác thực qua token (1-1 với `ownerId`, xem token-store.ts).
+ * Namespace "/dashboard": xác thực qua JWT trong cookie (cùng cơ chế đăng nhập
+ * dashboard — dashboard KHÔNG còn "tin tưởng local network" như ghi chú cũ nữa,
+ * vì giờ có nhiều người dùng chung 1 server).
  */
 export class OverlayGateway {
   private readonly io: SocketIOServer;
-  private sequence = 0;
+  private readonly sequenceByOwner = new Map<string, number>();
   private readonly overlayNs: Namespace;
   private readonly dashboardNs: Namespace;
 
-  constructor(httpServer: HttpServer, private readonly tokenStore: TokenStore) {
+  constructor(
+    httpServer: HttpServer,
+    private readonly tokenStore: TokenStore,
+    private readonly verifyDashboardToken: (token: string) => { id: string } | null,
+  ) {
     this.io = new SocketIOServer(httpServer, {
       path: "/socket.io",
       cors: { origin: "*" }, // MVP self-hosted: overlay page có thể mở từ file:// hoặc host khác OBS proxy — thắt chặt khi triển khai production thật
@@ -31,53 +42,70 @@ export class OverlayGateway {
     this.dashboardNs = this.io.of("/dashboard");
 
     this.overlayNs.use((socket, next) => {
-      const token = socket.handshake.query.token;
-      if (!this.tokenStore.verify(token)) {
+      const ownerId = this.tokenStore.verify(socket.handshake.query.token);
+      if (!ownerId) {
         next(new Error("Unauthorized: token overlay không hợp lệ"));
         return;
       }
+      socket.data.ownerId = ownerId;
       next();
     });
 
-    this.setupNamespace(this.overlayNs, "overlay");
-    this.setupNamespace(this.dashboardNs, "dashboard");
-    // GHI CHÚ SECURITY (đã ghi ở REALTIME-ARCHITECTURE.md): namespace "/dashboard"
-    // KHÔNG bắt buộc token ở MVP vì chỉ chạy local/self-hosted. Nếu deploy ra VPS
-    // công khai, đây là việc BẮT BUỘC phải bật token tương tự "/overlay" trước khi
-    // production — chưa làm ở milestone này vì Dashboard UI (M10) chưa tồn tại.
+    this.dashboardNs.use((socket, next) => {
+      const cookieHeader = socket.handshake.headers.cookie ?? "";
+      const token = parseCookie(cookieHeader, "token");
+      const payload = token ? this.verifyDashboardToken(token) : null;
+      if (!payload) {
+        next(new Error("Unauthorized: chưa đăng nhập"));
+        return;
+      }
+      socket.data.ownerId = payload.id;
+      next();
+    });
+
+    this.setupNamespace(this.overlayNs, "overlay", overlayRoom);
+    this.setupNamespace(this.dashboardNs, "dashboard", dashboardRoom);
   }
 
-  private setupNamespace(ns: Namespace, label: string): void {
+  private setupNamespace(ns: Namespace, label: string, roomOf: (ownerId: string) => string): void {
     ns.on("connection", (socket) => {
-      logger.info({ socketId: socket.id, namespace: label }, "Client kết nối");
-      // Resync: gửi ngay sequence hiện tại để client (mới hoặc vừa reconnect) không
-      // bị kẹt ở trạng thái cũ (docs/architecture/REALTIME-ARCHITECTURE.md).
-      socket.emit("sync", { sequence: this.sequence });
+      const ownerId = socket.data.ownerId as string;
+      void socket.join(roomOf(ownerId));
+      logger.info({ socketId: socket.id, namespace: label, ownerId }, "Client kết nối");
+
+      // Resync: gửi ngay sequence hiện tại CỦA ĐÚNG OWNER để client (mới hoặc vừa
+      // reconnect) không bị kẹt ở trạng thái cũ (REALTIME-ARCHITECTURE.md).
+      socket.emit("sync", { sequence: this.sequenceByOwner.get(ownerId) ?? 0 });
 
       socket.on("disconnect", (reason) => {
-        logger.info({ socketId: socket.id, namespace: label, reason }, "Client ngắt kết nối");
+        logger.info({ socketId: socket.id, namespace: label, ownerId, reason }, "Client ngắt kết nối");
       });
     });
   }
 
-  /** Phát 1 message tới mọi overlay + dashboard client đang kết nối, gắn sequence tăng dần. */
-  broadcast(type: OverlayMessage["type"], data: unknown): OverlayMessage {
-    this.sequence += 1;
-    const message: OverlayMessage = { sequence: this.sequence, type, data };
-    this.overlayNs.emit("message", message);
-    this.dashboardNs.emit("message", message);
+  /** Phát 1 message tới overlay + dashboard client CỦA ĐÚNG `ownerId`, gắn sequence tăng dần riêng theo owner. */
+  broadcast(ownerId: string, type: OverlayMessage["type"], data: unknown): OverlayMessage {
+    const nextSequence = (this.sequenceByOwner.get(ownerId) ?? 0) + 1;
+    this.sequenceByOwner.set(ownerId, nextSequence);
+    const message: OverlayMessage = { sequence: nextSequence, type, data };
+    this.overlayNs.to(overlayRoom(ownerId)).emit("message", message);
+    this.dashboardNs.to(dashboardRoom(ownerId)).emit("message", message);
     return message;
   }
 
-  get connectedOverlayCount(): number {
-    return this.overlayNs.sockets.size;
-  }
-
-  get connectedDashboardCount(): number {
-    return this.dashboardNs.sockets.size;
+  connectedOverlayCount(ownerId: string): number {
+    return this.overlayNs.adapter.rooms.get(overlayRoom(ownerId))?.size ?? 0;
   }
 
   async close(): Promise<void> {
     await this.io.close();
   }
+}
+
+function parseCookie(cookieHeader: string, name: string): string | null {
+  for (const part of cookieHeader.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
 }

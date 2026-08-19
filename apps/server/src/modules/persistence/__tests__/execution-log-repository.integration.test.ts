@@ -3,19 +3,26 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDb, type Database } from "../db.js";
 import { createExecutionLogPort } from "../execution-log-repository.js";
-import { automations, eventsLog, executionLogs } from "../schema.js";
+import { automations, eventsLog, executionLogs, users } from "../schema.js";
 
 const connectionString =
   process.env.DATABASE_URL ??
   "postgres://tiktok_live:tiktok_live_dev_only@127.0.0.1:5544/tiktok_live";
 
 let db: Database;
+let ownerId: string;
 
-beforeAll(() => {
+beforeAll(async () => {
   db = createDb(connectionString);
+  const [owner] = await db
+    .insert(users)
+    .values({ email: `test-exec-log-${randomUUID()}@example.com`, passwordHash: "x", role: "user" })
+    .returning({ id: users.id });
+  ownerId = owner.id;
 });
 
 afterAll(async () => {
+  await db.delete(users).where(eq(users.id, ownerId));
   await db.$client.end();
 });
 
@@ -31,6 +38,7 @@ async function seedEventAndAutomation() {
   });
   await db.insert(automations).values({
     id: automationId,
+    ownerId,
     name: "test automation",
     triggerEventType: "gift",
     actions: [{ type: "tts", payload: {} }],
