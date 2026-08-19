@@ -6,6 +6,7 @@
  * Regex dựng bằng mã hex (không phải regex literal) để tránh mọi rủi ro công cụ
  * chỉnh sửa văn bản ghi nhầm ký tự điều khiển thật vào source thay vì escape sequence.
  */
+// eslint-disable-next-line no-control-regex -- có chủ đích: loại bỏ control character khỏi text thô.
 const CONTROL_CHARS = new RegExp("[\\x00-\\x1f\\x7f]", "g");
 
 export function sanitizeText(input: string): string {

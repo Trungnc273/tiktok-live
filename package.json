@@ -2,6 +2,7 @@
   "name": "tiktok-live-automation-platform",
   "private": true,
   "version": "0.0.0",
+  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -9,7 +10,16 @@
   "scripts": {
     "dev:server": "npm run dev --workspace=apps/server",
     "test:server": "npm run test --workspace=apps/server",
-    "build:server": "npm run build --workspace=apps/server"
+    "build:server": "npm run build --workspace=apps/server",
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "eslint": "^9.14.0",
+    "typescript-eslint": "^8.13.0",
+    "@eslint/js": "^9.14.0"
   },
   "engines": {
     "node": ">=22"
