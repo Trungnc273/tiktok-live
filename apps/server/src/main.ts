@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, access } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
@@ -13,7 +13,14 @@ import {
 import { OverlayGateway, TokenStore } from "./modules/overlay-gateway/index.js";
 import { createHttpServer, StatusTracker } from "./modules/api/index.js";
 import { ActionDispatcher, HandlerRegistry } from "./modules/action-engine/index.js";
-import { createTTSActionHandler, WindowsSapiProvider, TTSQueue } from "./modules/tts/index.js";
+import {
+  createTTSActionHandler,
+  WindowsSapiProvider,
+  LinuxEspeakProvider,
+  MockTTSProvider,
+  TTSQueue,
+  type TTSProvider,
+} from "./modules/tts/index.js";
 import { createSoundActionHandler } from "./modules/audio/index.js";
 import { OBSService, createOBSSceneChangeActionHandler } from "./modules/obs/index.js";
 import { verifyJwtToken } from "./modules/auth/index.js";
@@ -41,6 +48,20 @@ const secureCookie = process.env.NODE_ENV === "production";
 // vì kết nối TikTok thật — tiện test nhiều "streamer" mà không cần nhiều tài khoản
 // TikTok thật đang live cùng lúc.
 const useMockProvider = process.env.MOCK_TIKTOK === "1";
+
+/**
+ * Chọn TTS provider theo hệ điều hành thật (không cần cấu hình thủ công) — có thể
+ * override bằng TTS_PROVIDER=windows|linux|mock. WindowsSapiProvider verify thật ở
+ * M06 (audio thật 141-240KB). LinuxEspeakProvider verify thật bằng Docker container
+ * Node.js Linux (audio thật 174KB, tiếng Việt có dấu) — xem docs/reports.
+ */
+function createTtsProvider(): TTSProvider {
+  const override = process.env.TTS_PROVIDER;
+  if (override === "mock") return new MockTTSProvider();
+  if (override === "windows") return new WindowsSapiProvider();
+  if (override === "linux") return new LinuxEspeakProvider();
+  return process.platform === "win32" ? new WindowsSapiProvider() : new LinuxEspeakProvider();
+}
 
 if (!process.env.JWT_SECRET) {
   logger.warn(
@@ -71,15 +92,37 @@ if (process.env.OBS_WEBSOCKET_URL) {
 }
 const actionDispatcher = new ActionDispatcher(handlerRegistry, executionLogPort);
 
+async function dirIfExists(path: string): Promise<string | undefined> {
+  try {
+    await access(path);
+    return path;
+  } catch {
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   await mkdir(mediaDir, { recursive: true });
   await mkdir(soundsDir, { recursive: true });
+
+  // Phục vụ tĩnh apps/overlay/dist + apps/dashboard/dist (đã `npm run build`) nếu
+  // có sẵn — cho phép mở toàn bộ hệ thống qua 1 URL duy nhất (tiện demo qua ngrok/VPS
+  // mà không cần chạy riêng 2 Vite dev server). Không bắt buộc: nếu chưa build,
+  // server vẫn chạy bình thường (dev dùng `npm run dev --workspace=apps/dashboard`).
+  const overlayAppDir = await dirIfExists(
+    process.env.OVERLAY_APP_DIR ?? join(process.cwd(), "..", "overlay", "dist"),
+  );
+  const dashboardAppDir = await dirIfExists(
+    process.env.DASHBOARD_APP_DIR ?? join(process.cwd(), "..", "dashboard", "dist"),
+  );
 
   const httpApp = await createHttpServer({
     tokenStore,
     publicBaseUrl,
     mediaDir,
     soundsDir,
+    overlayAppDir,
+    dashboardAppDir,
     automationsRepository,
     eventsRepository,
     usersRepository,
@@ -96,7 +139,7 @@ async function main(): Promise<void> {
   );
 
   handlerRegistry.register(
-    createTTSActionHandler(new WindowsSapiProvider(), new TTSQueue(), {
+    createTTSActionHandler(createTtsProvider(), new TTSQueue(), {
       outputDir: mediaDir,
       onAudioReady: (filePath, ctx) => {
         overlayGateway.broadcast(ctx.ownerId, "ttsReady", {

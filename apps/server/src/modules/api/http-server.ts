@@ -15,6 +15,10 @@ export interface HttpServerDeps {
   publicBaseUrl: string;
   mediaDir?: string;
   soundsDir?: string;
+  /** Thư mục `apps/overlay/dist` đã build (production) — phục vụ tĩnh tại /overlay/ để mở trực tiếp trên điện thoại thứ 2 (không cần chạy Vite dev server riêng). Optional cho dev/test. */
+  overlayAppDir?: string;
+  /** Thư mục `apps/dashboard/dist` đã build — phục vụ tĩnh tại "/". Optional cho dev/test. */
+  dashboardAppDir?: string;
   automationsRepository?: AutomationsRepository;
   eventsRepository?: EventsRepository;
   /** Bắt buộc để bật route đăng nhập/đăng ký/admin — optional để test cũ không cần auth vẫn chạy được (test đó sẽ không gọi các route yêu cầu auth). */
@@ -73,7 +77,7 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
 
   app.post("/api/overlays", { preHandler: app.authenticate }, async (req) => {
     const token = deps.tokenStore.issue(req.user.id);
-    const url = `${deps.publicBaseUrl}/overlay?token=${token}`;
+    const url = `${deps.publicBaseUrl}/overlay/?token=${token}`;
     return { token, url };
   });
 
@@ -82,6 +86,22 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
   }
   if (deps.soundsDir) {
     void app.register(fastifyStatic, { root: deps.soundsDir, prefix: "/sounds/", decorateReply: false });
+  }
+  if (deps.overlayAppDir) {
+    void app.register(fastifyStatic, {
+      root: deps.overlayAppDir,
+      prefix: "/overlay/",
+      decorateReply: false,
+      index: ["index.html"],
+    });
+  }
+  if (deps.dashboardAppDir) {
+    void app.register(fastifyStatic, {
+      root: deps.dashboardAppDir,
+      prefix: "/",
+      decorateReply: false,
+      index: ["index.html"],
+    });
   }
 
   // --- Live monitoring start/stop (multi-tenant) — mỗi user tự bật/tắt theo dõi TikTok của mình ---

@@ -58,7 +58,7 @@ describe("HTTP server", () => {
 
     expect(res.statusCode).toBe(200);
     expect(tokenStore.verify(body.token)).toBe("user-1");
-    expect(body.url).toBe(`http://localhost:3000/overlay?token=${body.token}`);
+    expect(body.url).toBe(`http://localhost:3000/overlay/?token=${body.token}`);
   });
 
   it("mỗi lần gọi /api/overlays sinh token khác nhau", async () => {
