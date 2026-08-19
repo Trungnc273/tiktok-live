@@ -20,6 +20,7 @@ import { evaluateRules } from "./modules/rule-engine/index.js";
 import { ActionDispatcher, HandlerRegistry } from "./modules/action-engine/index.js";
 import { createTTSActionHandler, WindowsSapiProvider, TTSQueue } from "./modules/tts/index.js";
 import { createSoundActionHandler } from "./modules/audio/index.js";
+import { OBSService, createOBSSceneChangeActionHandler } from "./modules/obs/index.js";
 
 /**
  * Entrypoint đầy đủ M01→M10: kết nối TikTok LIVE (thật hoặc mock) -> normalize ->
@@ -77,6 +78,15 @@ handlerRegistry.register(
     },
   }),
 );
+// OBS (M11) — CHỈ đăng ký handler nếu có cấu hình OBS_WEBSOCKET_URL, vì:
+// (a) không bắt buộc với mọi streamer, (b) môi trường dev hiện tại KHÔNG có OBS
+// Studio thật cài sẵn để test real connection (xem M11-REPORT.md) — không đăng ký
+// mù quáng handler cho 1 service chưa xác nhận kết nối được.
+const obsService = new OBSService();
+if (process.env.OBS_WEBSOCKET_URL) {
+  handlerRegistry.register(createOBSSceneChangeActionHandler(obsService));
+}
+
 const actionDispatcher = new ActionDispatcher(handlerRegistry, executionLogPort);
 
 // streamId dùng chung cho LiveEvent.streamId VÀ stream_sessions.id — gán sau khi
@@ -142,6 +152,17 @@ async function main(): Promise<void> {
     "HTTP+Socket.IO server sẵn sàng. Overlay demo URL (dev, chưa build apps/overlay vào server)",
   );
 
+  if (process.env.OBS_WEBSOCKET_URL) {
+    try {
+      await obsService.connect({ url: process.env.OBS_WEBSOCKET_URL, password: process.env.OBS_WEBSOCKET_PASSWORD });
+      logger.info("Đã kết nối OBS WebSocket");
+    } catch (err) {
+      // Không chặn khởi động server nếu OBS không kết nối được (streamer có thể
+      // chưa mở OBS lúc start) — action obs.sceneChange sẽ tự báo lỗi khi dispatch.
+      logger.error({ err }, "Không kết nối được OBS WebSocket lúc khởi động — sẽ không chặn server chạy tiếp");
+    }
+  }
+
   try {
     streamId = await eventsRepository.createStreamSession(username ?? "mock-user");
     logger.info({ streamId }, "Đã tạo stream session trong Postgres");
@@ -178,9 +199,12 @@ async function main(): Promise<void> {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "Nhận tín hiệu dừng, đang ngắt kết nối...");
-    void Promise.allSettled([manager.stop(), overlayGateway.close(), httpApp.close()]).then(() =>
-      process.exit(0),
-    );
+    void Promise.allSettled([
+      manager.stop(),
+      overlayGateway.close(),
+      httpApp.close(),
+      obsService.disconnect(),
+    ]).then(() => process.exit(0));
   });
 }
 
