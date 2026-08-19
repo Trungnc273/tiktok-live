@@ -16,6 +16,22 @@ export interface RecentEvent {
   receivedAt: string;
 }
 
+export interface CurrentUser {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+  tiktokUsername: string | null;
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+  tiktokUsername: string | null;
+  disabledAt: string | null;
+  createdAt: string;
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -26,6 +42,49 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  // --- Auth ---
+  register: (email: string, password: string) =>
+    fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then((r) => json<CurrentUser>(r)),
+
+  login: (email: string, password: string) =>
+    fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then((r) => json<CurrentUser>(r)),
+
+  logout: () => fetch("/api/auth/logout", { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+
+  me: async (): Promise<CurrentUser | null> => {
+    const res = await fetch("/api/auth/me");
+    if (res.status === 401) return null;
+    return json<CurrentUser | null>(res);
+  },
+
+  setTiktokUsername: (tiktokUsername: string | null) =>
+    fetch("/api/auth/tiktok-username", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tiktokUsername }),
+    }).then((r) => json<{ ok: boolean }>(r)),
+
+  // --- Live monitoring ---
+  startLive: () => fetch("/api/live/start", { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+  stopLive: () => fetch("/api/live/stop", { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+
+  // --- Overlay ---
+  createOverlayUrl: () => fetch("/api/overlays", { method: "POST" }).then((r) => json<{ token: string; url: string }>(r)),
+
+  // --- Admin ---
+  listUsers: () => fetch("/api/admin/users").then((r) => json<AdminUserRow[]>(r)),
+  disableUser: (id: string) => fetch(`/api/admin/users/${id}/disable`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+  enableUser: (id: string) => fetch(`/api/admin/users/${id}/enable`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+
+  // --- Automations ---
   listAutomations: () => fetch("/api/automations").then((r) => json<AutomationRule[]>(r)),
 
   createAutomation: (input: CreateAutomationInput) =>
