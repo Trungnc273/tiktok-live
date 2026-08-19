@@ -32,8 +32,14 @@ function isTTSActionPayload(payload: unknown): payload is TTSActionPayload {
 export function createTTSActionHandler(
   provider: TTSProvider,
   queue: TTSQueue,
-  options: { timeoutMs?: number; onAudioReady?: (filePath: string, ctx: ActionContext) => void } = {},
+  options: {
+    timeoutMs?: number;
+    /** Thư mục ghi file audio ra — mặc định OS tmpdir. Ở M09, main.ts truyền vào 1 thư mục được Fastify phục vụ tĩnh (/media) để overlay tải về phát được. */
+    outputDir?: string;
+    onAudioReady?: (filePath: string, ctx: ActionContext) => void;
+  } = {},
 ): ActionHandler {
+  const outputDir = options.outputDir ?? tmpdir();
   const onAudioReady = options.onAudioReady ?? ((filePath) => logger.info({ filePath }, "TTS audio sẵn sàng"));
 
   return {
@@ -59,7 +65,7 @@ export function createTTSActionHandler(
         throw new Error("TTS: text rỗng sau khi render template, không có gì để đọc");
       }
 
-      const outFilePath = join(tmpdir(), `tiktok-live-tts-${randomUUID()}.wav`);
+      const outFilePath = join(outputDir, `tiktok-live-tts-${randomUUID()}.wav`);
       await queue.enqueue(() => provider.synthesizeToFile(text, outFilePath));
       onAudioReady(outFilePath, ctx);
     },

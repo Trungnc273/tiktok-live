@@ -31,9 +31,24 @@ export function App() {
     socket.on("disconnect", () => setConnected(false));
     socket.on("connect_error", () => setConnected(false));
 
+    // Resync khi (re)connect — docs/architecture/REALTIME-ARCHITECTURE.md.
+    socket.on("sync", (payload: { sequence: number }) => {
+      guardRef.current.fastForwardTo(payload.sequence);
+    });
+
     socket.on("message", (message: OverlayMessage) => {
       if (!guardRef.current.accept(message.sequence)) return; // duplicate/cũ hơn -> bỏ qua
-      if (message.type !== "liveEvent") return; // sound/tts ready xử lý ở milestone sau
+
+      if (message.type === "soundReady" || message.type === "ttsReady") {
+        const { url } = message.data as { url: string };
+        void new Audio(url).play().catch(() => {
+          // Trình duyệt có thể chặn autoplay nếu chưa có tương tác người dùng —
+          // chấp nhận được ở overlay OBS Browser Source (không có user gesture).
+        });
+        return;
+      }
+
+      if (message.type !== "liveEvent") return;
 
       const content = describeAlert(message.data as LiveEvent);
       if (!content) return;

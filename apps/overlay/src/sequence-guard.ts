@@ -15,4 +15,9 @@ export class SequenceGuard {
   get lastSequence(): number {
     return this.last;
   }
+
+  /** Dùng khi nhận "sync" từ server lúc (re)connect — không bao giờ lùi lại. */
+  fastForwardTo(sequence: number): void {
+    this.last = Math.max(this.last, sequence);
+  }
 }
