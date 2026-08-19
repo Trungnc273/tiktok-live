@@ -1,0 +1,17 @@
+{
+  "name": "tiktok-live-automation-platform",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=apps/server",
+    "test:server": "npm run test --workspace=apps/server",
+    "build:server": "npm run build --workspace=apps/server"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

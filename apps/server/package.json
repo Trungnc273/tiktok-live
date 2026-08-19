@@ -1,0 +1,25 @@
+{
+  "name": "@tiktok-live/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tiktok-live/shared-types": "0.0.0",
+    "tiktok-live-connector": "^2.4.4",
+    "uuid": "^9.0.1",
+    "pino": "^9.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.1",
+    "vitest": "^2.1.2",
+    "@types/node": "^22.7.4"
+  }
+}
