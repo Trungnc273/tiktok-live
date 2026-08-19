@@ -5,3 +5,5 @@ build/
 *.log
 .DS_Store
 coverage/
+apps/server/.media/
+apps/server/sounds/

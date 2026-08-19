@@ -1,25 +1,24 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import { automationRuleSchema } from "@tiktok-live/shared-types";
 import type { TokenStore } from "../overlay-gateway/index.js";
+import type { AutomationsRepository, EventsRepository } from "../persistence/index.js";
+import type { StatusTracker } from "./status-tracker.js";
+import { validateRule } from "../rule-engine/index.js";
 
 export interface HttpServerDeps {
   tokenStore: TokenStore;
-  publicBaseUrl: string; // ví dụ http://localhost:3000 — dùng để dựng overlay URL đầy đủ
-  /** Thư mục chứa audio TTS sinh ra (M06), phục vụ tĩnh tại /media/:file. Optional — bỏ qua nếu chưa cấu hình. */
+  publicBaseUrl: string;
   mediaDir?: string;
-  /** Thư mục chứa file sound cấu hình sẵn (M07), phục vụ tĩnh tại /sounds/:file. Optional. */
   soundsDir?: string;
+  automationsRepository?: AutomationsRepository;
+  eventsRepository?: EventsRepository;
+  statusTracker?: StatusTracker;
 }
 
-/**
- * REST API + static file server tối thiểu:
- * - M08: tạo overlay URL + token.
- * - M09: phục vụ file audio (TTS output + sound cấu hình) qua HTTP để overlay
- *   browser tải về phát (docs/promp/PHASE_9.md/PHASE_10.md — action sound/tts phải
- *   phát được ở overlay, không phải ở server).
- *
- * CRUD automation đầy đủ thuộc M10 (Dashboard) — chưa làm ở đây.
- */
+const createAutomationBodySchema = automationRuleSchema.omit({ id: true, createdAt: true, updatedAt: true });
+const updateAutomationBodySchema = createAutomationBodySchema.partial();
+
 export function createHttpServer(deps: HttpServerDeps): FastifyInstance {
   const app = Fastify({ logger: false });
 
@@ -35,12 +34,85 @@ export function createHttpServer(deps: HttpServerDeps): FastifyInstance {
     void app.register(fastifyStatic, { root: deps.mediaDir, prefix: "/media/", decorateReply: false });
   }
   if (deps.soundsDir) {
-    void app.register(fastifyStatic, {
-      root: deps.soundsDir,
-      prefix: "/sounds/",
-      decorateReply: false,
-    });
+    void app.register(fastifyStatic, { root: deps.soundsDir, prefix: "/sounds/", decorateReply: false });
   }
+
+  // --- Dashboard: status & recent events (M10) ---
+
+  app.get("/api/status", async () => {
+    return deps.statusTracker?.snapshot() ?? { connectionState: "idle", viewerCount: null, counts: {} };
+  });
+
+  app.get("/api/events/recent", async (req) => {
+    const limit = Number((req.query as { limit?: string }).limit ?? 20);
+    return deps.eventsRepository?.getRecent(Math.min(limit, 100)) ?? [];
+  });
+
+  // --- Automations CRUD (M10) ---
+
+  app.get("/api/automations", async () => {
+    return (await deps.automationsRepository?.list()) ?? [];
+  });
+
+  app.post("/api/automations", async (req, reply) => {
+    const parsed = createAutomationBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Dữ liệu automation không hợp lệ", details: parsed.error.issues };
+    }
+
+    const validation = validateRule({
+      ...parsed.data,
+      id: "temp",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    if (!validation.valid) {
+      reply.code(400);
+      return { error: "Rule không hợp lệ", details: validation.errors };
+    }
+
+    const created = await deps.automationsRepository?.create(parsed.data);
+    reply.code(201);
+    return created;
+  });
+
+  app.put("/api/automations/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = updateAutomationBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Dữ liệu automation không hợp lệ", details: parsed.error.issues };
+    }
+    const updated = await deps.automationsRepository?.update(id, parsed.data);
+    if (!updated) {
+      reply.code(404);
+      return { error: "Không tìm thấy automation" };
+    }
+    return updated;
+  });
+
+  app.delete("/api/automations/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ok = await deps.automationsRepository?.delete(id);
+    if (!ok) {
+      reply.code(404);
+      return { error: "Không tìm thấy automation" };
+    }
+    reply.code(204);
+    return null;
+  });
+
+  app.post("/api/automations/:id/duplicate", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const duplicated = await deps.automationsRepository?.duplicate(id);
+    if (!duplicated) {
+      reply.code(404);
+      return { error: "Không tìm thấy automation" };
+    }
+    reply.code(201);
+    return duplicated;
+  });
 
   return app;
 }

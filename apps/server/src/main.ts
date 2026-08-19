@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { logger } from "./config/logger.js";
 import {
   ConnectionManager,
@@ -6,17 +8,23 @@ import {
   type ConnectionState,
 } from "./modules/tiktok-adapter/index.js";
 import { normalizeAndValidate } from "./modules/event-normalizer/index.js";
-import { createDb, createEventsRepository } from "./modules/persistence/index.js";
+import {
+  createDb,
+  createEventsRepository,
+  createAutomationsRepository,
+  createExecutionLogPort,
+} from "./modules/persistence/index.js";
 import { OverlayGateway, TokenStore } from "./modules/overlay-gateway/index.js";
-import { createHttpServer } from "./modules/api/index.js";
+import { createHttpServer, StatusTracker } from "./modules/api/index.js";
+import { evaluateRules } from "./modules/rule-engine/index.js";
+import { ActionDispatcher, HandlerRegistry } from "./modules/action-engine/index.js";
+import { createTTSActionHandler, WindowsSapiProvider, TTSQueue } from "./modules/tts/index.js";
+import { createSoundActionHandler } from "./modules/audio/index.js";
 
 /**
- * M01+M02+M03+M08 entrypoint thủ công: kết nối tới TikTok LIVE thật nếu có
- * TIKTOK_USERNAME trong biến môi trường, ngược lại dùng MockProvider bơm event
- * giả lập; normalize + validate; ghi vào Postgres bất đồng bộ (M03); broadcast
- * LiveEvent hợp lệ tới overlay client qua Socket.IO (M08). Rule Engine/Action
- * Engine (M04/M05) CHƯA được nối vào pipeline này — sẽ nối khi Dashboard (M10)
- * cho phép tạo automation thật, thay vì broadcast mọi event thô không điều kiện.
+ * Entrypoint đầy đủ M01→M10: kết nối TikTok LIVE (thật hoặc mock) -> normalize ->
+ * ghi Postgres -> broadcast overlay -> Rule Engine đọc automation thật từ DB ->
+ * Action Engine dispatch -> TTS/Sound -> broadcast audio URL tới overlay.
  */
 
 const username = process.env.TIKTOK_USERNAME;
@@ -26,6 +34,8 @@ const databaseUrl =
   "postgres://tiktok_live:tiktok_live_dev_only@127.0.0.1:5544/tiktok_live";
 const port = Number(process.env.PORT ?? 3000);
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
+const mediaDir = process.env.MEDIA_DIR ?? join(process.cwd(), ".media");
+const soundsDir = process.env.SOUNDS_DIR ?? join(process.cwd(), "sounds");
 
 const provider = username
   ? new TikTokLiveConnectorProvider({ signApiKey })
@@ -34,8 +44,40 @@ const provider = username
 const manager = new ConnectionManager(provider);
 const db = createDb(databaseUrl);
 const eventsRepository = createEventsRepository(db);
+const automationsRepository = createAutomationsRepository(db);
+const executionLogPort = createExecutionLogPort(db);
+const statusTracker = new StatusTracker();
 const tokenStore = new TokenStore();
-const httpApp = createHttpServer({ tokenStore, publicBaseUrl });
+const httpApp = createHttpServer({
+  tokenStore,
+  publicBaseUrl,
+  mediaDir,
+  soundsDir,
+  automationsRepository,
+  eventsRepository,
+  statusTracker,
+});
+
+const overlayGateway = new OverlayGateway(httpApp.server, tokenStore);
+
+const handlerRegistry = new HandlerRegistry();
+handlerRegistry.register(
+  createTTSActionHandler(new WindowsSapiProvider(), new TTSQueue(), {
+    outputDir: mediaDir,
+    onAudioReady: (filePath) => {
+      overlayGateway.broadcast("ttsReady", { url: `${publicBaseUrl}/media/${basename(filePath)}` });
+    },
+  }),
+);
+handlerRegistry.register(
+  createSoundActionHandler({
+    soundsDir,
+    onSoundReady: (filePath) => {
+      overlayGateway.broadcast("soundReady", { url: `${publicBaseUrl}/sounds/${basename(filePath)}` });
+    },
+  }),
+);
+const actionDispatcher = new ActionDispatcher(handlerRegistry, executionLogPort);
 
 // streamId dùng chung cho LiveEvent.streamId VÀ stream_sessions.id — gán sau khi
 // tạo session record, mặc định "unlinked" nếu tạo session thất bại (DB down khi khởi động).
@@ -43,9 +85,8 @@ let streamId = "unlinked";
 
 manager.on("stateChange", (state: ConnectionState) => {
   logger.info({ state }, "tiktok-adapter state changed");
+  statusTracker.setConnectionState(state);
 });
-
-const overlayGateway = new OverlayGateway(httpApp.server, tokenStore);
 
 manager.on("event", (event) => {
   logger.debug({ event }, "tiktok-adapter raw event");
@@ -54,15 +95,36 @@ manager.on("event", (event) => {
     logger.warn({ event, error: result.error }, "event-normalizer: bỏ qua event không hợp lệ");
     return;
   }
-  logger.info({ liveEvent: result.event }, "LiveEvent chuẩn hoá");
+  const liveEvent = result.event;
+  logger.info({ liveEvent }, "LiveEvent chuẩn hoá");
+  statusTracker.recordEvent(liveEvent);
 
   // Fire-and-forget: KHÔNG await, KHÔNG được để lỗi DB chặn nhận event tiếp theo.
   const sessionId = streamId === "unlinked" ? null : streamId;
-  eventsRepository.recordEvent(result.event, sessionId).catch((err: unknown) => {
-    logger.error({ err, eventId: result.event?.id }, "persistence: ghi events_log thất bại");
+  eventsRepository.recordEvent(liveEvent, sessionId).catch((err: unknown) => {
+    logger.error({ err, eventId: liveEvent.id }, "persistence: ghi events_log thất bại");
   });
 
-  overlayGateway.broadcast("liveEvent", result.event);
+  overlayGateway.broadcast("liveEvent", liveEvent);
+
+  // Rule Engine (M04) -> Action Engine (M05) — đọc automation thật từ DB mỗi event.
+  // MVP: chưa cache in-memory (đơn giản hơn, đủ cho 1 streamer); nếu volume cao gây
+  // nghẽn, cân nhắc cache + invalidate khi CRUD automation ở Phase 2.
+  automationsRepository
+    .list()
+    .then((rules) => {
+      const matches = evaluateRules(rules, liveEvent);
+      for (const match of matches) {
+        void actionDispatcher
+          .dispatch(match, { ruleId: match.ruleId, ruleName: match.ruleName, event: liveEvent })
+          .catch((err: unknown) => {
+            logger.error({ err, ruleId: match.ruleId }, "action-dispatcher: lỗi không mong đợi");
+          });
+      }
+    })
+    .catch((err: unknown) => {
+      logger.error({ err }, "rule-engine: không đọc được automations từ DB");
+    });
 });
 
 manager.on("connectionError", (err: Error) => {
@@ -70,6 +132,9 @@ manager.on("connectionError", (err: Error) => {
 });
 
 async function main(): Promise<void> {
+  await mkdir(mediaDir, { recursive: true });
+  await mkdir(soundsDir, { recursive: true });
+
   await httpApp.listen({ port, host: "0.0.0.0" });
   const demoOverlayToken = tokenStore.issue();
   logger.info(

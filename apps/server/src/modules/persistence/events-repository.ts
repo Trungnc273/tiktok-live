@@ -1,10 +1,19 @@
-import type { LiveEvent } from "@tiktok-live/shared-types";
+import { desc } from "drizzle-orm";
 import type { Database } from "./db.js";
 import { eventsLog, streamSessions } from "./schema.js";
 
+export interface RecentEventRow {
+  id: string;
+  type: string;
+  username: string | null;
+  payload: unknown;
+  receivedAt: string;
+}
+
 export interface EventsRepository {
   createStreamSession(tiktokUsername: string): Promise<string>;
-  recordEvent(event: LiveEvent, streamSessionId: string | null): Promise<void>;
+  recordEvent(event: import("@tiktok-live/shared-types").LiveEvent, streamSessionId: string | null): Promise<void>;
+  getRecent(limit: number): Promise<RecentEventRow[]>;
 }
 
 /**
@@ -24,7 +33,7 @@ export function createEventsRepository(db: Database): EventsRepository {
       return row.id;
     },
 
-    async recordEvent(event: LiveEvent, streamSessionId: string | null): Promise<void> {
+    async recordEvent(event, streamSessionId: string | null): Promise<void> {
       await db.insert(eventsLog).values({
         id: event.id,
         streamSessionId,
@@ -34,6 +43,17 @@ export function createEventsRepository(db: Database): EventsRepository {
         username: event.user.username,
         receivedAt: new Date(event.timestamp),
       });
+    },
+
+    async getRecent(limit: number): Promise<RecentEventRow[]> {
+      const rows = await db.select().from(eventsLog).orderBy(desc(eventsLog.receivedAt)).limit(limit);
+      return rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        username: r.username,
+        payload: r.payload,
+        receivedAt: r.receivedAt.toISOString(),
+      }));
     },
   };
 }
