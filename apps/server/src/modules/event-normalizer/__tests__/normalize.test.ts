@@ -14,7 +14,7 @@ describe("normalizeAndValidate", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "comment",
       user: { id: "1", username: "abc" },
       payload: { text: "hello world" },
@@ -33,7 +33,7 @@ describe("normalizeAndValidate", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "gift",
       payload: {
         giftId: "5655",
@@ -52,7 +52,7 @@ describe("normalizeAndValidate", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({ type: "follow", payload: {} });
+    expect(result.ok ? result.event : undefined).toMatchObject({ type: "follow", payload: {} });
   });
 
   it("normalizes a like event with count", () => {
@@ -62,7 +62,7 @@ describe("normalizeAndValidate", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "like",
       payload: { count: 5, totalLikeCount: 120 },
     });
@@ -74,7 +74,7 @@ describe("normalizeAndValidate", () => {
       "stream-1",
     );
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({ type: "share" });
+    expect(result.ok ? result.event : undefined).toMatchObject({ type: "share" });
   });
 
   it("normalizes a member (join) event", () => {
@@ -83,13 +83,13 @@ describe("normalizeAndValidate", () => {
       "stream-1",
     );
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({ type: "join", payload: { viewerCount: 42 } });
+    expect(result.ok ? result.event : undefined).toMatchObject({ type: "join", payload: { viewerCount: 42 } });
   });
 
   it("normalizes a roomUser (viewer count) event without a specific user", () => {
     const result = normalizeAndValidate(adapterEvent("roomUser", { totalUser: "999" }), "stream-1");
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "join",
       user: { username: "unknown" },
       payload: { viewerCount: 999 },
@@ -99,7 +99,7 @@ describe("normalizeAndValidate", () => {
   it("falls back to unknown event for unmapped event names, without throwing", () => {
     const result = normalizeAndValidate(adapterEvent("someWeirdEvent", { foo: "bar" }), "stream-1");
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "unknown",
       payload: { originalType: "someWeirdEvent" },
     });
@@ -108,7 +108,7 @@ describe("normalizeAndValidate", () => {
   it("falls back gracefully when user is missing entirely", () => {
     const result = normalizeAndValidate(adapterEvent("follow", {}), "stream-1");
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({ user: { id: "unknown", username: "unknown" } });
+    expect(result.ok ? result.event : undefined).toMatchObject({ user: { id: "unknown", username: "unknown" } });
   });
 
   it("never throws even when data is null — falls back to safe defaults", () => {
@@ -116,7 +116,7 @@ describe("normalizeAndValidate", () => {
     expect(() => normalizeAndValidate(adapterEvent("gift", null), "stream-1")).not.toThrow();
     const result = normalizeAndValidate(adapterEvent("gift", null), "stream-1");
     expect(result.ok).toBe(true);
-    expect(result.event).toMatchObject({
+    expect(result.ok ? result.event : undefined).toMatchObject({
       type: "gift",
       payload: { giftId: "unknown", giftName: "unknown", isStreakEnd: false },
     });

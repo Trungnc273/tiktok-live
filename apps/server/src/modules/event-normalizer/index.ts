@@ -6,11 +6,9 @@ export { normalizeAdapterEvent } from "./normalize.js";
 export { extractUser, type NormalizedUser } from "./user-extractor.js";
 export { sanitizeText } from "./sanitize.js";
 
-export interface NormalizeResult {
-  ok: boolean;
-  event?: LiveEvent;
-  error?: string;
-}
+export type NormalizeResult =
+  | { ok: true; event: LiveEvent }
+  | { ok: false; error: string };
 
 /**
  * Chuyển AdapterEvent thành LiveEvent VÀ validate bằng Zod trước khi cho phép

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tiktok-live-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tiktok_live
+      POSTGRES_PASSWORD: tiktok_live_dev_only
+      POSTGRES_DB: tiktok_live
+    ports:
+      - "127.0.0.1:5544:5432"
+    volumes:
+      - tiktok-live-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tiktok_live -d tiktok_live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tiktok-live-postgres-data:
