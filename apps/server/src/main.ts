@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { logger } from "./config/logger.js";
 import {
   ConnectionManager,
@@ -5,6 +6,7 @@ import {
   TikTokLiveConnectorProvider,
   type ConnectionState,
 } from "./modules/tiktok-adapter/index.js";
+import { normalizeAndValidate } from "./modules/event-normalizer/index.js";
 
 /**
  * M01 entrypoint thủ công: kết nối tới TikTok LIVE thật nếu có TIKTOK_USERNAME
@@ -25,8 +27,16 @@ manager.on("stateChange", (state: ConnectionState) => {
   logger.info({ state }, "tiktok-adapter state changed");
 });
 
+const streamId = randomUUID();
+
 manager.on("event", (event) => {
-  logger.info({ event }, "tiktok-adapter raw event");
+  logger.debug({ event }, "tiktok-adapter raw event");
+  const result = normalizeAndValidate(event, streamId);
+  if (!result.ok) {
+    logger.warn({ event, error: result.error }, "event-normalizer: bỏ qua event không hợp lệ");
+    return;
+  }
+  logger.info({ liveEvent: result.event }, "LiveEvent chuẩn hoá");
 });
 
 manager.on("connectionError", (err: Error) => {
@@ -46,9 +56,11 @@ async function main(): Promise<void> {
     const mockProvider = provider as MockProvider;
     // Bơm 1 event mẫu để chứng minh pipeline nhận được — chỉ phục vụ dev, không phải test tự động.
     setInterval(() => {
+      // Field names khớp WebcastChatMessage thật (content, user.uniqueId) — xem
+      // apps/server/src/modules/event-normalizer/normalize.ts.
       mockProvider.emitFakeEvent("chat", {
-        comment: "hello",
-        user: { uniqueId: "test_user" },
+        content: "hello",
+        user: { id: "1", uniqueId: "test_user" },
       });
     }, 5000);
   }
