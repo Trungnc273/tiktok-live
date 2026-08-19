@@ -5,7 +5,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: tiktok_live
-      POSTGRES_PASSWORD: tiktok_live_dev_only
+      # PHASE 14 audit M3: đọc từ biến môi trường (.env) thay vì hardcode — giá trị
+      # dev mặc định chỉ dùng khi KHÔNG đặt POSTGRES_PASSWORD, đổi mật khẩu thật khi deploy.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tiktok_live_dev_only}
       POSTGRES_DB: tiktok_live
     ports:
       - "127.0.0.1:5544:5432"

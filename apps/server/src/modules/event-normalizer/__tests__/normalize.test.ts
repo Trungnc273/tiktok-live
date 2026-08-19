@@ -6,6 +6,39 @@ function adapterEvent(name: string, data: unknown): AdapterEvent {
   return { name, data, receivedAt: new Date().toISOString() };
 }
 
+describe("normalizeAndValidate — id deterministic (PHASE 14 audit finding H1)", () => {
+  it("cùng 1 raw event (kể cả common.msgId) -> normalize 2 lần cho ra CÙNG 1 id", () => {
+    const raw = adapterEvent("gift", {
+      common: { msgId: "msg-123" },
+      gift: { id: "1", name: "Rose", diamondCount: 1 },
+      repeatCount: 1,
+      repeatEnd: 1,
+      user: { id: "u1", uniqueId: "gifter" },
+    });
+
+    const first = normalizeAndValidate(raw, "stream-1");
+    const second = normalizeAndValidate(raw, "stream-1");
+
+    expect(first.ok && second.ok).toBe(true);
+    expect(first.ok ? first.event.id : null).toBe(second.ok ? second.event.id : null);
+  });
+
+  it("cùng payload nhưng KHÔNG có common.msgId (fallback hash) -> vẫn ra CÙNG 1 id", () => {
+    const raw = adapterEvent("follow", { user: { id: "u2", uniqueId: "follower_x" } });
+
+    const first = normalizeAndValidate(raw, "stream-1");
+    const second = normalizeAndValidate(raw, "stream-1");
+
+    expect(first.ok ? first.event.id : null).toBe(second.ok ? second.event.id : null);
+  });
+
+  it("2 event khác nội dung -> id khác nhau (không phải hash cố định cho mọi thứ)", () => {
+    const a = normalizeAndValidate(adapterEvent("follow", { user: { id: "1", uniqueId: "a" } }), "stream-1");
+    const b = normalizeAndValidate(adapterEvent("follow", { user: { id: "2", uniqueId: "b" } }), "stream-1");
+    expect(a.ok ? a.event.id : null).not.toBe(b.ok ? b.event.id : null);
+  });
+});
+
 describe("normalizeAndValidate", () => {
   it("normalizes a chat event into a comment LiveEvent", () => {
     const result = normalizeAndValidate(

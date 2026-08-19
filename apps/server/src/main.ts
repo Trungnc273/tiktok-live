@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { sql } from "drizzle-orm";
 import { logger } from "./config/logger.js";
 import {
   ConnectionManager,
@@ -57,6 +58,10 @@ const httpApp = createHttpServer({
   automationsRepository,
   eventsRepository,
   statusTracker,
+  checkDb: () => db.execute(sql`select 1`).then(() => undefined),
+  // Mặc định "*" cho dev self-hosted; đặt CORS_ORIGIN thật khi deploy production
+  // (PHASE 14 audit L2) — ví dụ domain của apps/dashboard đã build.
+  corsOrigin: process.env.CORS_ORIGIN ?? "*",
 });
 
 const overlayGateway = new OverlayGateway(httpApp.server, tokenStore);

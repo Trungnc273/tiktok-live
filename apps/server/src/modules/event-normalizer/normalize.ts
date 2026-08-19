@@ -1,8 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { v5 as uuidv5 } from "uuid";
 import type { LiveEvent } from "@tiktok-live/shared-types";
 import type { AdapterEvent } from "../tiktok-adapter/types.js";
 import { extractUser } from "./user-extractor.js";
 import { sanitizeText } from "./sanitize.js";
+
+/**
+ * Namespace cố định cho UUID v5 (sinh 1 lần duy nhất, KHÔNG được đổi — đổi sẽ làm
+ * mọi id cũ tính lại khác đi, phá vỡ idempotency đang dựa trên id này).
+ */
+const EVENT_ID_NAMESPACE = "6f1b1a4e-6e0f-4c1e-9d2a-8f1b0c2e5a11";
 
 /**
  * Chuyển AdapterEvent (raw, trung lập) thành LiveEvent chuẩn hoá theo
@@ -59,20 +65,47 @@ function toNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-function baseFields(streamId: string) {
+/**
+ * Sinh id DETERMINISTIC cho cùng 1 sự kiện thật — đúng thiết kế EVENT-MODEL.md
+ * ("id sinh tại lúc normalize, deterministic theo nguồn nếu thư viện cung cấp
+ * event id gốc; nếu không có, dùng hash(type+user+timestamp+payload cơ bản)").
+ *
+ * Trước đây dùng randomUUID() (id ngẫu nhiên mỗi lần gọi) — phát hiện ở PHASE 14
+ * audit (H1): làm mất khả năng chống trùng khi thư viện TikTok gửi lặp 1 event
+ * (ví dụ khi reconnect/replay buffer), vì idempotency ở Action Engine (M05) dựa
+ * trên event_id — 2 lần normalize cùng 1 event thật trước đây tạo ra 2 id khác
+ * nhau, khiến TTS/action có thể chạy 2 lần cho cùng 1 tương tác.
+ *
+ * Ưu tiên `common.msgId` (có trên hầu hết message type theo CommonMessageData
+ * trong tiktok-live-proto/v3) — deterministic tuyệt đối theo nguồn. Nếu vắng mặt,
+ * fallback hash theo (eventName + user + toàn bộ payload) — KHÔNG bao gồm thời
+ * điểm nhận (receivedAt), vì 2 lần gửi lặp cùng nội dung có thể đến ở 2 thời điểm
+ * khác nhau; bao gồm receivedAt sẽ vô hiệu hoá chính mục đích chống trùng.
+ */
+function deriveEventId(eventName: string, safeData: object): string {
+  const common = (safeData as { common?: { msgId?: unknown } }).common;
+  if (common && typeof common.msgId === "string" && common.msgId.length > 0) {
+    return uuidv5(`${eventName}:${common.msgId}`, EVENT_ID_NAMESPACE);
+  }
+
+  const fallbackKey = `${eventName}:${JSON.stringify(safeData)}`;
+  return uuidv5(fallbackKey, EVENT_ID_NAMESPACE);
+}
+
+function baseFields(streamId: string, id: string) {
   return {
     schemaVersion: 1 as const,
-    id: randomUUID(),
+    id,
     timestamp: new Date().toISOString(),
     streamId,
   };
 }
 
 export function normalizeAdapterEvent(event: AdapterEvent, streamId: string): LiveEvent {
-  const base = baseFields(streamId);
   // event.data có thể là null/undefined nếu thư viện gửi payload rỗng — fallback về {}
   // để các case bên dưới không throw khi truy cập property (defensive, không tin dữ liệu vào).
   const safeData = (event.data ?? {}) as object;
+  const base = baseFields(streamId, deriveEventId(event.name, safeData));
 
   switch (event.name) {
     case "chat": {

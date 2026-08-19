@@ -66,7 +66,18 @@ export function createTTSActionHandler(
       }
 
       const outFilePath = join(outputDir, `tiktok-live-tts-${randomUUID()}.wav`);
-      await queue.enqueue(() => provider.synthesizeToFile(text, outFilePath));
+      try {
+        await queue.enqueue(() => provider.synthesizeToFile(text, outFilePath));
+      } catch (err) {
+        // PHASE 14 audit M4: hàng đợi đầy (gift bão) trước đây chỉ tăng
+        // queue.droppedCount âm thầm, không nơi nào log lại — streamer không biết
+        // có lời cảm ơn đã bị bỏ qua. Action vẫn "failed" như cũ (rethrow), nhưng
+        // giờ có 1 dòng log rõ ràng kèm droppedCount tích luỹ để dễ phát hiện qua log.
+        if (err instanceof Error && err.message.includes("hàng đợi đầy")) {
+          logger.warn({ droppedCount: queue.droppedCount, ruleId: ctx.ruleId }, "TTSQueue: job bị drop do quá tải");
+        }
+        throw err;
+      }
       onAudioReady(outFilePath, ctx);
     },
   };

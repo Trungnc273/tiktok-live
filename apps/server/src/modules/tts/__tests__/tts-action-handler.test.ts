@@ -92,4 +92,22 @@ describe("TTS action handler (qua ActionDispatcher)", () => {
     expect(outcomes[0].status).toBe("failed");
     expect(outcomes[0].error).toContain("alwaysFail");
   });
+
+  it("hàng đợi đầy (PHASE 14 audit M4) -> action failed rõ ràng, queue.droppedCount tăng", async () => {
+    const provider = new MockTTSProvider();
+    const queue = new TTSQueue({ maxQueueSize: 0 }); // luôn đầy -> job đầu tiên bị drop ngay
+    const registry = new HandlerRegistry();
+    registry.register(createTTSActionHandler(provider, queue));
+    const dispatcher = new ActionDispatcher(registry, new MemoryExecutionLogPort());
+
+    const outcomes = await dispatcher.dispatch(
+      { ruleId: "r1", ruleName: "test", eventId: "event-1", actions: [{ type: "tts", payload: { template: "hello {username}" } }] },
+      { ruleId: "r1", ruleName: "test", event: followEvent() },
+    );
+
+    expect(outcomes[0].status).toBe("failed");
+    expect(outcomes[0].error).toContain("hàng đợi đầy");
+    // handler có maxRetries:1 -> 2 lần thử, cả 2 đều bị drop (queue luôn đầy) -> droppedCount = 2.
+    expect(queue.droppedCount).toBe(2); // giờ có thể quan sát được, không còn âm thầm
+  });
 });

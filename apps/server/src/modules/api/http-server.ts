@@ -1,10 +1,12 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyCors from "@fastify/cors";
 import { automationRuleSchema } from "@tiktok-live/shared-types";
 import type { TokenStore } from "../overlay-gateway/index.js";
 import type { AutomationsRepository, EventsRepository } from "../persistence/index.js";
 import type { StatusTracker } from "./status-tracker.js";
 import { validateRule } from "../rule-engine/index.js";
+import { logger } from "../../config/logger.js";
 
 export interface HttpServerDeps {
   tokenStore: TokenStore;
@@ -14,6 +16,10 @@ export interface HttpServerDeps {
   automationsRepository?: AutomationsRepository;
   eventsRepository?: EventsRepository;
   statusTracker?: StatusTracker;
+  /** Ping DB thật cho /health (PHASE 14 audit M1) — ví dụ `() => db.execute(sql\`select 1\`)`. Optional để giữ test hiện có không cần DB vẫn chạy được. */
+  checkDb?: () => Promise<void>;
+  /** Nguồn cho phép CORS (PHASE 14 audit L2) — mặc định "*" cho dev, PHẢI thắt chặt khi deploy production thật. */
+  corsOrigin?: string | string[] | boolean;
 }
 
 const createAutomationBodySchema = automationRuleSchema.omit({ id: true, createdAt: true, updatedAt: true });
@@ -22,7 +28,30 @@ const updateAutomationBodySchema = createAutomationBodySchema.partial();
 export function createHttpServer(deps: HttpServerDeps): FastifyInstance {
   const app = Fastify({ logger: false });
 
-  app.get("/health", async () => ({ status: "ok" }));
+  void app.register(fastifyCors, { origin: deps.corsOrigin ?? "*" });
+
+  // Không để lộ chi tiết lỗi nội bộ (message/stack Postgres...) ra response JSON
+  // cho client (PHASE 14 audit M2) — log đầy đủ ở server, trả message chung ra ngoài.
+  app.setErrorHandler((err: FastifyError, req, reply) => {
+    logger.error({ err, url: req.url, method: req.method }, "Lỗi xử lý request không được bắt tường minh");
+    const statusCode = err.statusCode ?? 500;
+    reply.code(statusCode).send({ error: statusCode >= 500 ? "Lỗi máy chủ nội bộ" : err.message });
+  });
+
+  app.get("/health", async (_req, reply) => {
+    const dbOk = deps.checkDb
+      ? await deps.checkDb().then(
+          () => true,
+          () => false,
+        )
+      : null; // null = không cấu hình kiểm tra DB (test/dev không truyền checkDb)
+
+    const connectionState = deps.statusTracker?.snapshot().connectionState ?? "unknown";
+    const healthy = dbOk !== false;
+
+    reply.code(healthy ? 200 : 503);
+    return { status: healthy ? "ok" : "degraded", db: dbOk, tiktokConnectionState: connectionState };
+  });
 
   app.post("/api/overlays", async () => {
     const token = deps.tokenStore.issue();
