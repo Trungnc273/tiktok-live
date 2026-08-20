@@ -31,7 +31,9 @@ export function App() {
     refreshAutomations();
     api.getStatus().then(setStatus).catch(console.error);
 
-    const socket = io(`${window.location.origin}/dashboard`, { path: "/socket.io" });
+    // transports: ["websocket"] — bỏ qua bước "nâng cấp" từ HTTP long-polling hay
+    // bị ngắt giữa chừng khi đi qua Cloudflare Tunnel (xem ghi chú tương tự ở overlay/App.tsx).
+    const socket = io(`${window.location.origin}/dashboard`, { path: "/socket.io", transports: ["websocket"] });
     socket.on("message", (message: OverlayMessage) => {
       if (message.type === "liveEvent") {
         api.getStatus().then(setStatus).catch(console.error);

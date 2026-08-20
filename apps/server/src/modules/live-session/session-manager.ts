@@ -117,7 +117,12 @@ export class LiveSessionManager {
         return;
       }
       const liveEvent = result.event;
-      lastActivityAt = Date.now(); // có hoạt động thật -> reset mốc đếm im lặng
+      // "like" (tap tim) bắn liên tục gần như không ngừng trên mọi live thật ->
+      // nếu tính là "hoạt động" thì đồng hồ đếm im lặng sẽ KHÔNG BAO GIỜ đủ lâu để
+      // rule "idle" bắn (bug thật đã gặp: silentForMs chưa từng vượt quá 1s dù
+      // hoàn toàn không có comment/gift/follow nào). Chỉ tương tác "có chủ đích"
+      // (follow/comment/share/gift/join) mới tính là hoạt động thật cho mục đích này.
+      if (liveEvent.type !== "like") lastActivityAt = Date.now();
       tracker.recordEvent(liveEvent);
 
       const sessionId = streamId === "unlinked" ? null : streamId;

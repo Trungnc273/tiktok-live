@@ -42,7 +42,7 @@ describe("AutomationBuilder — tạo automation không cần viết code (PRD a
     await user.click(within(form).getByText("+ TTS"));
     // Dùng fireEvent.change thay vì userEvent.type() vì "{" "}" là cú pháp phím đặc
     // biệt của userEvent (không phải ký tự literal) — fireEvent tránh hoàn toàn vấn đề này.
-    fireEvent.change(within(form).getByPlaceholderText("Cảm ơn {username}!"), {
+    fireEvent.change(within(form).getByPlaceholderText("Cảm ơn {nickname}!"), {
       target: { value: "Cam on {username} da tang Rose!" },
     });
 

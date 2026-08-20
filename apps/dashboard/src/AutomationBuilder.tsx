@@ -272,7 +272,7 @@ export function AutomationBuilder({ onCreate, onUpdate, onCancelEdit, editing }:
             <div className="flex gap-2">
               {action.type === "tts" ? (
                 <input
-                  placeholder="Cảm ơn {username}!"
+                  placeholder="Cảm ơn {nickname}!"
                   value={action.template}
                   onChange={(e) => updateAction(i, { template: e.target.value })}
                 />

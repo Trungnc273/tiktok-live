@@ -50,6 +50,26 @@ export function App() {
   // thầm dù đã bấm nút — bug thật user gặp khi test trên điện thoại. AudioContext
   // dùng chung giải quyết đúng gốc vấn đề này (chuẩn "unlock" cho iOS/WebView).
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // Wake Lock: giữ màn hình điện thoại KHÔNG tự tắt trong lúc overlay đang mở —
+  // yêu cầu người dùng ("phát nền trên điện thoại"). Đây là cách THỰC TẾ NHẤT để
+  // đảm bảo TTS/sound luôn phát được: máy này vốn đã cắm cố định gần mic (thiết
+  // bị #2 trong setup 2 điện thoại), không cần người cầm/thao tác liên tục — chỉ
+  // cần màn hình không tắt là tab overlay không bị hệ điều hành tạm dừng.
+  // LƯU Ý: không có gì đảm bảo 100% khi người dùng TỰ khoá máy bằng nút nguồn
+  // (trình duyệt di động, đặc biệt iOS Safari, vẫn có thể tạm dừng tab nền để
+  // tiết kiệm pin) — Wake Lock chỉ ngăn máy tự khoá do hết giờ, không chặn được
+  // hành động khoá thủ công.
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
+  async function requestWakeLock() {
+    try {
+      if (!("wakeLock" in navigator)) return;
+      wakeLockRef.current = await navigator.wakeLock.request("screen");
+    } catch {
+      // Một số trình duyệt/điều kiện (vd tab không hiển thị) từ chối — bỏ qua,
+      // không phải lỗi nghiêm trọng, chỉ là màn hình có thể tự tắt sau ít phút.
+    }
+  }
 
   async function playNext(): Promise<void> {
     if (!audioUnlockedRef.current) return; // đợi unlock, hàng đợi vẫn giữ nguyên
@@ -89,6 +109,7 @@ export function App() {
 
   function unlockAudio() {
     setUnlockError(null);
+    void requestWakeLock(); // cùng lúc với user gesture -> tận dụng luôn, không cần chờ
     try {
       const Ctor = getAudioContextCtor();
       if (!Ctor) throw new Error("Trình duyệt này không hỗ trợ Web Audio API");
@@ -109,10 +130,37 @@ export function App() {
   }
 
   useEffect(() => {
+    // Wake Lock tự động bị trình duyệt HUỶ khi tab chuyển sang nền (dù người
+    // dùng chưa khoá máy) — quay lại tab (mở lại app, không tắt màn hình) thì
+    // xin cấp lại nếu trước đó đã unlock audio thành công.
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && audioUnlockedRef.current) {
+        void requestWakeLock();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Media Session: báo cho hệ điều hành (đặc biệt Android) đây là 1 phiên
+    // phát media hợp lệ — một số trình duyệt/thiết bị ưu ái không tạm dừng tab
+    // nền khi có Media Session đang "playing" thay vì coi là tab im lặng bình thường.
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: "TikTok LIVE Overlay",
+        artist: "Đang chờ hiệu ứng (follow/like/comment/gift)...",
+      });
+      navigator.mediaSession.playbackState = "playing";
+    }
+
     const token = getTokenFromUrl();
     const socket: Socket = io(`${window.location.origin}/overlay`, {
       path: "/socket.io",
       query: { token: token ?? "" },
+      // Mặc định Socket.IO bắt tay bằng HTTP long-polling trước rồi mới "nâng cấp"
+      // lên WebSocket — bước nâng cấp này hay bị ngắt khi đi qua Cloudflare Tunnel/
+      // proxy trung gian (bug thật: overlay hiện "Mất kết nối" ngay sau khi mở tab
+      // mới, dù tự nối lại được sau đó). Ép dùng WebSocket ngay từ đầu, bỏ qua bước
+      // polling-rồi-nâng-cấp dễ vỡ này.
+      transports: ["websocket"],
     });
 
     socket.on("connect", () => setConnected(true));
@@ -147,6 +195,7 @@ export function App() {
 
     return () => {
       socket.close();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
