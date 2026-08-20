@@ -39,4 +39,17 @@ export class StatusTracker {
       counts: { ...this.counts },
     };
   }
+
+  /**
+   * Đưa về trạng thái ban đầu — bắt buộc phải gọi khi bắt đầu 1 phiên theo dõi
+   * MỚI (kể cả cùng owner đổi sang TikTok ID khác), vì LiveSessionManager tái sử
+   * dụng CÙNG 1 instance StatusTracker theo ownerId xuyên suốt các phiên. Không
+   * reset thì số liệu (follow/like/comment/gift) của live cũ sẽ cộng dồn sang
+   * live mới — bug thật đã gặp khi người dùng đổi TikTok username giữa chừng.
+   */
+  reset(): void {
+    this.connectionState = "idle";
+    this.viewerCount = null;
+    this.counts = { follow: 0, like: 0, comment: 0, share: 0, gift: 0 };
+  }
 }

@@ -10,6 +10,8 @@ import { logger } from "../../config/logger.js";
 
 export interface TTSActionPayload {
   template: string;
+  /** Mã ngôn ngữ đọc (xem TTS_LANGUAGES ở @tiktok-live/shared-types) — không có = provider tự chọn mặc định. */
+  lang?: string;
 }
 
 function isTTSActionPayload(payload: unknown): payload is TTSActionPayload {
@@ -66,8 +68,9 @@ export function createTTSActionHandler(
       }
 
       const outFilePath = join(outputDir, `tiktok-live-tts-${randomUUID()}.wav`);
+      const lang = action.payload.lang; // đọc ra biến local — TS không giữ narrowing qua closure bên dưới
       try {
-        await queue.enqueue(() => provider.synthesizeToFile(text, outFilePath));
+        await queue.enqueue(() => provider.synthesizeToFile(text, outFilePath, { lang }));
       } catch (err) {
         // PHASE 14 audit M4: hàng đợi đầy (gift bão) trước đây chỉ tăng
         // queue.droppedCount âm thầm, không nơi nào log lại — streamer không biết

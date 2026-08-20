@@ -1,10 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AutomationBuilder } from "../AutomationBuilder.js";
 
 describe("AutomationBuilder — tạo automation không cần viết code (PRD acceptance criteria)", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
   it("người dùng chọn Gift Rose -> Sound + TTS chỉ qua UI (không gõ JSON tay)", async () => {
+    // AutomationBuilder tự fetch GET /api/sounds lúc mount để nạp thư viện sound
+    // (yêu cầu người dùng: sound có sẵn + upload) — mock để test không phụ thuộc
+    // server thật và không log lỗi "Invalid URL" (jsdom không có origin mặc định).
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ builtin: [], uploaded: [] }),
+    }) as unknown as typeof fetch;
+
     const user = userEvent.setup();
     const onCreate = vi.fn().mockResolvedValue(undefined);
     render(<AutomationBuilder onCreate={onCreate} />);
@@ -43,12 +57,17 @@ describe("AutomationBuilder — tạo automation không cần viết code (PRD a
       conditions: { op: "equals", field: "payload.giftName", value: "Rose" },
       actions: [
         { type: "sound", payload: { file: "rose.mp3" } },
-        { type: "tts", payload: { template: "Cam on {username} da tang Rose!" } },
+        { type: "tts", payload: { template: "Cam on {username} da tang Rose!", lang: "vi" } },
       ],
     });
   });
 
   it("báo lỗi thay vì gọi API khi chưa có action nào", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ builtin: [], uploaded: [] }),
+    }) as unknown as typeof fetch;
+
     const user = userEvent.setup();
     const onCreate = vi.fn();
     render(<AutomationBuilder onCreate={onCreate} />);

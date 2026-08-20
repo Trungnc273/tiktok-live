@@ -50,6 +50,9 @@ export const automations = pgTable("automations", {
   enabled: boolean("enabled").notNull().default(true),
   priority: integer("priority").notNull().default(100),
   triggerEventType: text("trigger_event_type").notNull(),
+  // Cấu hình riêng theo loại trigger (hiện chỉ dùng cho "idle": { idleSeconds }) —
+  // để jsonb chung thay vì thêm cột riêng cho mỗi loại trigger tương lai.
+  triggerConfig: jsonb("trigger_config"),
   conditions: jsonb("conditions"), // ConditionNode | null — xem RULE-ENGINE.md
   actions: jsonb("actions").notNull(), // RuleAction[] — xem RULE-ENGINE.md
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

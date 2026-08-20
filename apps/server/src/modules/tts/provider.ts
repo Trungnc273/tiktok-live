@@ -12,7 +12,12 @@
  * Đây là quyết định tạm thời cho MVP — dễ thay bằng provider khác sau vì đã có
  * abstraction, không ảnh hưởng Action Engine/Rule Engine.
  */
+export interface TTSSynthesizeOptions {
+  /** Mã ngôn ngữ (xem TTS_LANGUAGES ở @tiktok-live/shared-types) — không truyền = provider tự chọn mặc định (Tiếng Việt). */
+  lang?: string;
+}
+
 export interface TTSProvider {
   /** Tổng hợp `text` thành audio, ghi ra file WAV tại `outFilePath`. */
-  synthesizeToFile(text: string, outFilePath: string): Promise<void>;
+  synthesizeToFile(text: string, outFilePath: string, options?: TTSSynthesizeOptions): Promise<void>;
 }

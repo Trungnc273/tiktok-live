@@ -28,17 +28,26 @@ export interface AutomationsRepository {
 }
 
 function toRule(row: typeof automations.$inferSelect): AutomationRule {
+  const triggerConfig = row.triggerConfig as { idleSeconds?: number } | null;
   return {
     id: row.id,
     name: row.name,
     enabled: row.enabled,
     priority: row.priority,
-    trigger: { eventType: row.triggerEventType as AutomationRule["trigger"]["eventType"] },
+    trigger: {
+      eventType: row.triggerEventType as AutomationRule["trigger"]["eventType"],
+      ...(triggerConfig?.idleSeconds !== undefined ? { idleSeconds: triggerConfig.idleSeconds } : {}),
+    },
     conditions: row.conditions as AutomationRule["conditions"],
     actions: row.actions as AutomationRule["actions"],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** trigger -> giá trị cột trigger_config (jsonb) — null nếu trigger không cần config riêng. */
+function toTriggerConfig(trigger: AutomationRule["trigger"]): { idleSeconds: number } | null {
+  return trigger.eventType === "idle" ? { idleSeconds: trigger.idleSeconds ?? 20 } : null;
 }
 
 export function createAutomationsRepository(db: Database): AutomationsRepository {
@@ -66,6 +75,7 @@ export function createAutomationsRepository(db: Database): AutomationsRepository
           enabled: input.enabled,
           priority: input.priority,
           triggerEventType: input.trigger.eventType,
+          triggerConfig: toTriggerConfig(input.trigger),
           conditions: input.conditions,
           actions: input.actions,
         })
@@ -78,7 +88,10 @@ export function createAutomationsRepository(db: Database): AutomationsRepository
       if (input.name !== undefined) patch.name = input.name;
       if (input.enabled !== undefined) patch.enabled = input.enabled;
       if (input.priority !== undefined) patch.priority = input.priority;
-      if (input.trigger !== undefined) patch.triggerEventType = input.trigger.eventType;
+      if (input.trigger !== undefined) {
+        patch.triggerEventType = input.trigger.eventType;
+        patch.triggerConfig = toTriggerConfig(input.trigger);
+      }
       if (input.conditions !== undefined) patch.conditions = input.conditions;
       if (input.actions !== undefined) patch.actions = input.actions;
 
@@ -113,6 +126,7 @@ export function createAutomationsRepository(db: Database): AutomationsRepository
           enabled: original.enabled,
           priority: original.priority,
           triggerEventType: original.triggerEventType,
+          triggerConfig: original.triggerConfig,
           conditions: original.conditions,
           actions: original.actions,
         })

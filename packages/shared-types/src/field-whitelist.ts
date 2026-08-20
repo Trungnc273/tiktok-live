@@ -24,6 +24,8 @@ export const FIELD_WHITELIST: Record<TriggerEventType, string[]> = {
     "payload.isStreakEnd",
   ],
   join: [...COMMON_FIELDS, "payload.viewerCount"],
+  // "idle" không có payload/user thật -> không có field nào để đặt điều kiện IF.
+  idle: [],
 };
 
 export function isFieldAllowed(eventType: TriggerEventType, field: string): boolean {

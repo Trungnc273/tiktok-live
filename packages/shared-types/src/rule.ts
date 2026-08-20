@@ -9,6 +9,11 @@ export const liveEventTypeForTriggerSchema = z.enum([
   "share",
   "gift",
   "join",
+  // Không phải sự kiện thật từ TikTok — trigger "hết giờ": tự bắn ra khi live IM
+  // LẶNG quá `idleSeconds` giây (không có event thật nào), lặp lại mỗi idleSeconds
+  // giây trong lúc vẫn im lặng. Dùng để tự động nhắc/chat filler khi live vắng
+  // tương tác quá lâu (yêu cầu người dùng). Xem live-session/session-manager.ts.
+  "idle",
 ]);
 
 const comparisonConditionSchema = z.object({
@@ -41,7 +46,13 @@ export const automationRuleSchema = z.object({
   name: z.string(),
   enabled: z.boolean(),
   priority: z.number(),
-  trigger: z.object({ eventType: liveEventTypeForTriggerSchema }),
+  trigger: z.object({
+    eventType: liveEventTypeForTriggerSchema,
+    // Chỉ có ý nghĩa khi eventType === "idle" — số giây im lặng trước khi tự đọc,
+    // và lặp lại mỗi ngần ấy giây trong lúc vẫn im lặng. Mặc định 20s ở UI/server
+    // nếu không truyền (xem automation-builder-logic.ts / session-manager.ts).
+    idleSeconds: z.number().min(5).max(3600).optional(),
+  }),
   conditions: conditionNodeSchema.nullable(),
   actions: z.array(ruleActionSchema),
   createdAt: z.string(),

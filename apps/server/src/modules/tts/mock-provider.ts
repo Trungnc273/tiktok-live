@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import type { TTSProvider } from "./provider.js";
+import type { TTSProvider, TTSSynthesizeOptions } from "./provider.js";
 
 /** WAV hợp lệ tối thiểu (44 byte header, PCM, 0 sample) — đủ để test kiểm tra file tồn tại/định dạng. */
 function buildSilentWavHeader(): Buffer {
@@ -23,6 +23,7 @@ function buildSilentWavHeader(): Buffer {
 export interface MockProviderCall {
   text: string;
   outFilePath: string;
+  lang?: string;
 }
 
 /**
@@ -34,8 +35,8 @@ export class MockTTSProvider implements TTSProvider {
   public failNext = false;
   public alwaysFail = false;
 
-  async synthesizeToFile(text: string, outFilePath: string): Promise<void> {
-    this.calls.push({ text, outFilePath });
+  async synthesizeToFile(text: string, outFilePath: string, options?: TTSSynthesizeOptions): Promise<void> {
+    this.calls.push({ text, outFilePath, lang: options?.lang });
     if (this.alwaysFail) {
       throw new Error("MockTTSProvider: giả lập lỗi provider (alwaysFail)");
     }

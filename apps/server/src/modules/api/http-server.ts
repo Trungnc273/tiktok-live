@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdir, readdir, rm } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyCors from "@fastify/cors";
+import fastifyMultipart from "@fastify/multipart";
+import { z } from "zod";
 import { automationRuleSchema } from "@tiktok-live/shared-types";
 import type { TokenStore } from "../overlay-gateway/index.js";
 import type { AutomationsRepository, EventsRepository, UsersRepository } from "../persistence/index.js";
@@ -9,6 +16,8 @@ import { validateRule } from "../rule-engine/index.js";
 import { logger } from "../../config/logger.js";
 import { registerAuthPlugin, registerAuthRoutes, registerAdminRoutes } from "../auth/index.js";
 import type { LiveSessionManager } from "../live-session/index.js";
+import type { TTSProvider } from "../tts/index.js";
+import { BUILTIN_SOUNDS } from "../audio/index.js";
 
 export interface HttpServerDeps {
   tokenStore: TokenStore;
@@ -38,6 +47,8 @@ export interface HttpServerDeps {
   corsOrigin?: string | string[] | boolean;
   jwtSecret: string;
   secureCookie?: boolean;
+  /** Cho phép "nghe thử" TTS trước khi lưu automation (POST /api/tts/preview) — optional, không có thì route trả 503. */
+  ttsProvider?: TTSProvider;
 }
 
 const createAutomationBodySchema = automationRuleSchema.omit({ id: true, createdAt: true, updatedAt: true });
@@ -47,6 +58,9 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
   const app = Fastify({ logger: false });
 
   await app.register(fastifyCors, { origin: deps.corsOrigin ?? "*" });
+  // Giới hạn 8MB/file — đủ cho sound effect ngắn (mp3/wav vài giây tới ~1 phút),
+  // chặn upload file khổng lồ chiếm dung lượng VPS (yêu cầu: "upload từ điện thoại, máy tính").
+  await app.register(fastifyMultipart, { limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
   await registerAuthPlugin(app, { jwtSecret: deps.jwtSecret, secureCookie: deps.secureCookie ?? false });
 
   // Không để lộ chi tiết lỗi nội bộ (message/stack Postgres...) ra response JSON
@@ -75,6 +89,33 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
     registerAdminRoutes(app, { usersRepository: deps.usersRepository });
   }
 
+  // "Nghe thử" (docs người dùng yêu cầu: "nghe trước hiệu ứng... đảm bảo dễ dùng")
+  // — synth TRỰC TIẾP bằng đúng TTSProvider thật đang chạy trên server (không phải
+  // Web Speech API của trình duyệt, vì giọng/phát âm tiếng Việt sẽ khác hẳn giọng
+  // thật lúc live), KHÔNG đi qua TTSQueue (đây là hành động tương tác của người
+  // dùng trong lúc soạn form, không phải phản ứng theo sự kiện live -> không cần
+  // và không nên xếp hàng chung với TTS thật của rule đang chạy).
+  const previewBodySchema = z.object({ text: z.string().trim().min(1).max(200), lang: z.string().optional() });
+  app.post("/api/tts/preview", { preHandler: app.authenticate }, async (req, reply) => {
+    const parsed = previewBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Nội dung nghe thử không hợp lệ (1-200 ký tự)" };
+    }
+    if (!deps.ttsProvider || !deps.mediaDir) {
+      reply.code(503);
+      return { error: "Chức năng nghe thử chưa sẵn sàng" };
+    }
+    const outFilePath = join(deps.mediaDir, `tts-preview-${randomUUID()}.wav`);
+    try {
+      await deps.ttsProvider.synthesizeToFile(parsed.data.text, outFilePath, { lang: parsed.data.lang });
+    } catch (err) {
+      reply.code(500);
+      return { error: err instanceof Error ? err.message : "Không tạo được audio nghe thử" };
+    }
+    return { url: `${deps.publicBaseUrl}/media/${basename(outFilePath)}` };
+  });
+
   app.post("/api/overlays", { preHandler: app.authenticate }, async (req) => {
     const token = deps.tokenStore.issue(req.user.id);
     const url = `${deps.publicBaseUrl}/overlay/?token=${token}`;
@@ -87,6 +128,74 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
   if (deps.soundsDir) {
     void app.register(fastifyStatic, { root: deps.soundsDir, prefix: "/sounds/", decorateReply: false });
   }
+
+  // --- Thư viện sound: có sẵn hệ thống (builtin) + upload từ điện thoại/máy tính ---
+
+  const UPLOAD_EXTENSIONS = new Set([".mp3", ".wav"]); // khớp SUPPORTED_EXTENSIONS ở validate-sound-file.ts
+  const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+  app.get("/api/sounds", { preHandler: app.authenticate }, async (_req, reply) => {
+    if (!deps.soundsDir) {
+      reply.code(503);
+      return { error: "Chưa cấu hình thư mục sound" };
+    }
+    let uploaded: string[] = [];
+    try {
+      const entries = await readdir(deps.soundsDir, { withFileTypes: true });
+      // Chỉ liệt kê file NẰM TRỰC TIẾP trong soundsDir (không đệ quy vào builtin/)
+      // — file trong builtin/ đã có sẵn trong BUILTIN_SOUNDS, tránh liệt kê trùng.
+      uploaded = entries.filter((e) => e.isFile()).map((e) => e.name);
+    } catch (err) {
+      logger.error({ err }, "GET /api/sounds: không đọc được soundsDir");
+    }
+    return { builtin: BUILTIN_SOUNDS, uploaded };
+  });
+
+  app.post("/api/sounds/upload", { preHandler: app.authenticate }, async (req, reply) => {
+    if (!deps.soundsDir) {
+      reply.code(503);
+      return { error: "Chưa cấu hình thư mục sound" };
+    }
+
+    const data = await req.file();
+    if (!data) {
+      reply.code(400);
+      return { error: "Thiếu file để upload" };
+    }
+
+    const ext = extname(data.filename).toLowerCase();
+    if (!UPLOAD_EXTENSIONS.has(ext)) {
+      // Vẫn phải drain stream trước khi trả lời, không thì Fastify treo request.
+      await data.file.resume();
+      reply.code(400);
+      return { error: `Định dạng "${ext || "?"}" không hỗ trợ (chỉ .mp3, .wav)` };
+    }
+
+    // Tên file sinh ngẫu nhiên (KHÔNG dùng tên gốc người dùng upload) — tránh path
+    // traversal / ký tự đặc biệt, và tránh 2 người dùng vô tình ghi đè file của nhau
+    // (mọi user hiện dùng chung 1 soundsDir — xem ghi chú soundsDir ở main.ts).
+    await mkdir(deps.soundsDir, { recursive: true });
+    const safeName = `upload-${randomUUID()}${ext}`;
+    const outPath = join(deps.soundsDir, safeName);
+
+    try {
+      await pipeline(data.file, createWriteStream(outPath));
+    } catch (err) {
+      await rm(outPath, { force: true });
+      logger.error({ err }, "POST /api/sounds/upload: ghi file thất bại");
+      reply.code(500);
+      return { error: "Không lưu được file" };
+    }
+
+    if (data.file.truncated) {
+      // Vượt quá fileSize limit đã cấu hình ở fastifyMultipart -> xoá phần dở, báo lỗi rõ ràng.
+      await rm(outPath, { force: true });
+      reply.code(413);
+      return { error: `File quá lớn (tối đa ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB)` };
+    }
+
+    return { file: safeName };
+  });
   if (deps.overlayAppDir) {
     void app.register(fastifyStatic, {
       root: deps.overlayAppDir,
@@ -116,15 +225,16 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
       reply.code(503);
       return { error: "Live session manager chưa sẵn sàng" };
     }
-    if (deps.liveSessionManagerBox?.current.isActive(req.user.id)) {
-      reply.code(409);
-      return { error: "Đã đang theo dõi live rồi" };
-    }
+    // Không còn chặn cứng khi đã có phiên đang chạy — LiveSessionManager.start()
+    // tự nhận biết đổi kênh (username khác phiên đang chạy) và tự dừng phiên cũ
+    // trước khi bắt đầu phiên mới. Chỉ báo lỗi khi user bấm start lại ĐÚNG kênh
+    // đang xem (thật sự trùng, không phải đổi kênh).
     try {
-      await deps.liveSessionManagerBox?.current.start(req.user.id, user.tiktokUsername);
+      await deps.liveSessionManagerBox.current.start(req.user.id, user.tiktokUsername);
     } catch (err) {
-      reply.code(500);
-      return { error: err instanceof Error ? err.message : "Không khởi động được phiên theo dõi" };
+      const message = err instanceof Error ? err.message : "Không khởi động được phiên theo dõi";
+      reply.code(message.includes("Đã đang theo dõi kênh này") ? 409 : 500);
+      return { error: message };
     }
     return { ok: true };
   });
@@ -138,7 +248,12 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
 
   app.get("/api/status", { preHandler: app.authenticate }, async (req) => {
     const tracker = deps.statusTrackers?.get(req.user.id);
-    return tracker?.snapshot() ?? { connectionState: "idle", viewerCount: null, counts: {} };
+    const snapshot = tracker?.snapshot() ?? { connectionState: "idle", viewerCount: null, counts: {} };
+    // Username thật đang được theo dõi (có thể khác username đã lưu trong hồ sơ
+    // nếu người dùng vừa đổi nhưng chưa bấm "Bắt đầu theo dõi" lại) — để dashboard
+    // hiển thị đúng, tránh hiểu nhầm đang xem kênh nào.
+    const activeTikTokUsername = deps.liveSessionManagerBox?.current?.getActiveTikTokUsername(req.user.id) ?? null;
+    return { ...snapshot, activeTikTokUsername };
   });
 
   app.get("/api/events/recent", { preHandler: app.authenticate }, async (req) => {

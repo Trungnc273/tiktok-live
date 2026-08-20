@@ -1,5 +1,5 @@
 import { mkdir, access } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { logger } from "./config/logger.js";
@@ -21,7 +21,7 @@ import {
   TTSQueue,
   type TTSProvider,
 } from "./modules/tts/index.js";
-import { createSoundActionHandler } from "./modules/audio/index.js";
+import { createSoundActionHandler, ensureBuiltinSounds } from "./modules/audio/index.js";
 import { OBSService, createOBSSceneChangeActionHandler } from "./modules/obs/index.js";
 import { verifyJwtToken } from "./modules/auth/index.js";
 import { LiveSessionManager } from "./modules/live-session/index.js";
@@ -104,6 +104,7 @@ async function dirIfExists(path: string): Promise<string | undefined> {
 async function main(): Promise<void> {
   await mkdir(mediaDir, { recursive: true });
   await mkdir(soundsDir, { recursive: true });
+  await ensureBuiltinSounds(soundsDir);
 
   // Phục vụ tĩnh apps/overlay/dist + apps/dashboard/dist (đã `npm run build`) nếu
   // có sẵn — cho phép mở toàn bộ hệ thống qua 1 URL duy nhất (tiện demo qua ngrok/VPS
@@ -115,6 +116,11 @@ async function main(): Promise<void> {
   const dashboardAppDir = await dirIfExists(
     process.env.DASHBOARD_APP_DIR ?? join(process.cwd(), "..", "dashboard", "dist"),
   );
+
+  // 1 instance TTSProvider dùng chung cho cả "nghe thử" (POST /api/tts/preview,
+  // gọi trực tiếp) và action handler thật (đi qua TTSQueue) — đảm bảo giọng nghe
+  // thử ĐÚNG BẰNG giọng lúc live thật, không lệch nhau.
+  const ttsProvider = createTtsProvider();
 
   const httpApp = await createHttpServer({
     tokenStore,
@@ -132,6 +138,7 @@ async function main(): Promise<void> {
     corsOrigin: process.env.CORS_ORIGIN ?? "*",
     jwtSecret,
     secureCookie,
+    ttsProvider,
   });
 
   const overlayGateway = new OverlayGateway(httpApp.server, tokenStore, (token) =>
@@ -139,7 +146,7 @@ async function main(): Promise<void> {
   );
 
   handlerRegistry.register(
-    createTTSActionHandler(createTtsProvider(), new TTSQueue(), {
+    createTTSActionHandler(ttsProvider, new TTSQueue(), {
       outputDir: mediaDir,
       onAudioReady: (filePath, ctx) => {
         overlayGateway.broadcast(ctx.ownerId, "ttsReady", {
@@ -152,8 +159,11 @@ async function main(): Promise<void> {
     createSoundActionHandler({
       soundsDir,
       onSoundReady: (filePath, ctx) => {
+        // basename() làm mất thư mục con (vd "builtin/") -> dùng path tương đối
+        // với soundsDir để giữ nguyên cấu trúc, đổi "\" thành "/" cho URL (Windows).
+        const relPath = relative(soundsDir, filePath).split(sep).join("/");
         overlayGateway.broadcast(ctx.ownerId, "soundReady", {
-          url: `${publicBaseUrl}/sounds/${basename(filePath)}`,
+          url: `${publicBaseUrl}/sounds/${relPath}`,
         });
       },
     }),

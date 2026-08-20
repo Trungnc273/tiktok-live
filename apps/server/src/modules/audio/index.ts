@@ -5,3 +5,4 @@ export {
   type SoundActionPayload,
   type CreateSoundActionHandlerOptions,
 } from "./sound-action-handler.js";
+export { ensureBuiltinSounds, BUILTIN_SOUNDS, type BuiltinSound } from "./builtin-sounds.js";

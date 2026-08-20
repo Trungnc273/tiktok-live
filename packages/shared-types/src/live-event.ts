@@ -75,6 +75,15 @@ export const unknownEventSchema = z.object({
   }),
 });
 
+// Không đến từ TikTok — server tự sinh khi live im lặng quá lâu (xem rule.ts
+// liveEventTypeForTriggerSchema và live-session/session-manager.ts). `user` dùng
+// giá trị placeholder cố định vì không gắn với người xem cụ thể nào.
+export const idleEventSchema = z.object({
+  ...baseFields,
+  type: z.literal("idle"),
+  payload: z.object({}).strict(),
+});
+
 export const liveEventSchema = z.discriminatedUnion("type", [
   followEventSchema,
   likeEventSchema,
@@ -83,6 +92,7 @@ export const liveEventSchema = z.discriminatedUnion("type", [
   giftEventSchema,
   joinEventSchema,
   unknownEventSchema,
+  idleEventSchema,
 ]);
 
 export type LiveEvent = z.infer<typeof liveEventSchema>;
@@ -93,5 +103,6 @@ export type ShareEvent = z.infer<typeof shareEventSchema>;
 export type GiftEvent = z.infer<typeof giftEventSchema>;
 export type JoinEvent = z.infer<typeof joinEventSchema>;
 export type UnknownEvent = z.infer<typeof unknownEventSchema>;
+export type IdleEvent = z.infer<typeof idleEventSchema>;
 
 export type LiveEventType = LiveEvent["type"];

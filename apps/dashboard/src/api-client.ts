@@ -6,6 +6,8 @@ export interface StatusResponse {
   connectionState: string;
   viewerCount: number | null;
   counts: Record<string, number>;
+  /** Username TikTok THẬT đang được theo dõi — có thể khác username đã lưu ở ô input nếu chưa bấm lại "Bắt đầu theo dõi". */
+  activeTikTokUsername?: string | null;
 }
 
 export interface RecentEvent {
@@ -105,6 +107,25 @@ export const api = {
 
   duplicateAutomation: (id: string) =>
     fetch(`/api/automations/${id}/duplicate`, { method: "POST" }).then((r) => json<AutomationRule>(r)),
+
+  // --- Nghe thử TTS trước khi lưu automation ---
+  previewTts: (text: string, lang?: string) =>
+    fetch("/api/tts/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, lang }),
+    }).then((r) => json<{ url: string }>(r)),
+
+  // --- Thư viện sound (có sẵn hệ thống + upload) ---
+  listSounds: () =>
+    fetch("/api/sounds").then((r) => json<{ builtin: { file: string; label: string }[]; uploaded: string[] }>(r)),
+
+  uploadSound: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/sounds/upload", { method: "POST", body: form });
+    return json<{ file: string }>(res);
+  },
 
   getStatus: () => fetch("/api/status").then((r) => json<StatusResponse>(r)),
 

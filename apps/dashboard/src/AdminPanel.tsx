@@ -20,32 +20,35 @@ export function AdminPanel() {
   }
 
   return (
-    <section>
-      <h2>Quản trị người dùng</h2>
-      <table data-testid="admin-users-table">
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Vai trò</th>
-            <th>TikTok</th>
-            <th>Trạng thái</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
+    <section className="space-y-3">
+      <h2 className="text-base font-semibold">Quản trị người dùng</h2>
+
+      {users.length === 0 ? (
+        <p className="rounded-lg bg-surface-2 px-4 py-6 text-center text-sm text-text-muted">Chưa có người dùng nào.</p>
+      ) : (
+        <ul className="space-y-2" data-testid="admin-users-table">
           {users.map((u) => (
-            <tr key={u.id}>
-              <td>{u.email}</td>
-              <td>{u.role}</td>
-              <td>{u.tiktokUsername ?? "-"}</td>
-              <td>{u.disabledAt ? "Đã vô hiệu hoá" : "Hoạt động"}</td>
-              <td>
-                <button onClick={() => toggle(u)}>{u.disabledAt ? "Kích hoạt lại" : "Vô hiệu hoá"}</button>
-              </td>
-            </tr>
+            <li key={u.id} className="flex items-center gap-3 rounded-xl bg-surface-2 px-3.5 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{u.email}</p>
+                <p className="flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
+                  <span className="badge bg-surface text-text-muted">{u.role}</span>
+                  <span>{u.tiktokUsername ?? "chưa gắn TikTok"}</span>
+                  <span className={u.disabledAt ? "text-danger" : "text-success"}>
+                    {u.disabledAt ? "Đã vô hiệu hoá" : "Hoạt động"}
+                  </span>
+                </p>
+              </div>
+              <button
+                className={`btn shrink-0 !px-3 !py-1.5 text-xs ${u.disabledAt ? "btn-primary" : "btn-danger"}`}
+                onClick={() => toggle(u)}
+              >
+                {u.disabledAt ? "Kích hoạt lại" : "Vô hiệu hoá"}
+              </button>
+            </li>
           ))}
-        </tbody>
-      </table>
+        </ul>
+      )}
     </section>
   );
 }

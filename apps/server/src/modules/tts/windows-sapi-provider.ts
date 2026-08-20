@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { TTSProvider } from "./provider.js";
+import type { TTSProvider, TTSSynthesizeOptions } from "./provider.js";
 
 /**
  * Provider thật dùng Windows Speech API (System.Speech) qua PowerShell.
@@ -16,9 +16,13 @@ import type { TTSProvider } from "./provider.js";
  * toàn khả năng thoát khỏi ngữ cảnh lệnh dù `text` chứa ký tự đặc biệt bất kỳ.
  */
 export class WindowsSapiProvider implements TTSProvider {
-  async synthesizeToFile(text: string, outFilePath: string): Promise<void> {
+  async synthesizeToFile(text: string, outFilePath: string, options?: TTSSynthesizeOptions): Promise<void> {
     const dir = await mkdtemp(join(tmpdir(), "tiktok-live-tts-"));
     const textFilePath = join(dir, `${randomUUID()}.txt`);
+    // "lang" đi qua whitelist TTS_LANGUAGES (@tiktok-live/shared-types) ở tầng
+    // trên, nhưng vẫn tự validate lại ở đây (defense-in-depth) trước khi nội suy
+    // vào script PowerShell — chỉ chấp nhận đúng dạng mã ngôn ngữ 2 chữ cái.
+    const cultureFilter = options?.lang && /^[a-z]{2}$/i.test(options.lang) ? options.lang.toLowerCase() : "vi";
 
     try {
       await writeFile(textFilePath, text, "utf8");
@@ -27,6 +31,14 @@ export class WindowsSapiProvider implements TTSProvider {
         "Add-Type -AssemblyName System.Speech",
         `$text = [IO.File]::ReadAllText('${textFilePath}', [Text.Encoding]::UTF8)`,
         "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+        // Chọn giọng nữ phổ biến nhất trong các giọng SAPI đã cài trên máy: ưu
+        // tiên giọng nữ đúng ngôn ngữ được chọn (nếu máy có cài gói ngôn ngữ đó),
+        // nếu không có thì lấy giọng nữ bất kỳ (vd: "Microsoft Zira" có sẵn mặc
+        // định trên hầu hết máy Windows) — không tìm được thì giữ giọng mặc định.
+        "$voices = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Gender -eq 'Female' }",
+        `$byLang = $voices | Where-Object { $_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq '${cultureFilter}' } | Select-Object -First 1`,
+        "$chosen = if ($byLang) { $byLang } else { $voices | Select-Object -First 1 }",
+        "if ($chosen) { $synth.SelectVoice($chosen.VoiceInfo.Name) }",
         `$synth.SetOutputToWaveFile('${outFilePath}')`,
         "$synth.Speak($text)",
         "$synth.Dispose()",
