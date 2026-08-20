@@ -17,6 +17,7 @@ import {
   createTTSActionHandler,
   WindowsSapiProvider,
   LinuxEspeakProvider,
+  PiperTTSProvider,
   MockTTSProvider,
   TTSQueue,
   type TTSProvider,
@@ -28,6 +29,7 @@ import { LiveSessionManager } from "./modules/live-session/index.js";
 import {
   GoogleTranslateProvider,
   MyMemoryTranslateProvider,
+  LLMTranslateProvider,
   type TranslationProvider,
 } from "./modules/translation/index.js";
 
@@ -56,27 +58,46 @@ const useMockProvider = process.env.MOCK_TIKTOK === "1";
 
 /**
  * Chọn TTS provider theo hệ điều hành thật (không cần cấu hình thủ công) — có thể
- * override bằng TTS_PROVIDER=windows|linux|mock. WindowsSapiProvider verify thật ở
- * M06 (audio thật 141-240KB). LinuxEspeakProvider verify thật bằng Docker container
- * Node.js Linux (audio thật 174KB, tiếng Việt có dấu) — xem docs/reports.
+ * override bằng TTS_PROVIDER=windows|linux|piper|mock. WindowsSapiProvider verify
+ * thật ở M06 (audio thật 141-240KB). LinuxEspeakProvider verify thật bằng Docker
+ * container Node.js Linux (audio thật 174KB, tiếng Việt có dấu) — xem docs/reports.
+ * PiperTTSProvider (yêu cầu người dùng: "vừa nhanh lại phải đảm bảo nói ngôn ngữ
+ * chuẩn") — giọng neural, tự nhiên hơn hẳn 2 provider trên, cần cài `piper` +
+ * model .onnx riêng (không tự bundle, đặt PIPER_BINARY_PATH/PIPER_VI_MODEL_PATH).
  */
 function createTtsProvider(): TTSProvider {
   const override = process.env.TTS_PROVIDER;
   if (override === "mock") return new MockTTSProvider();
   if (override === "windows") return new WindowsSapiProvider();
   if (override === "linux") return new LinuxEspeakProvider();
+  if (override === "piper") {
+    const binaryPath = process.env.PIPER_BINARY_PATH;
+    const viModelPath = process.env.PIPER_VI_MODEL_PATH;
+    if (!binaryPath || !viModelPath) {
+      throw new Error(
+        "TTS_PROVIDER=piper nhưng thiếu PIPER_BINARY_PATH hoặc PIPER_VI_MODEL_PATH trong .env",
+      );
+    }
+    return new PiperTTSProvider({ binaryPath, modelPaths: { vi: viModelPath }, defaultLang: "vi" });
+  }
   return process.platform === "win32" ? new WindowsSapiProvider() : new LinuxEspeakProvider();
 }
 
 /**
- * Dịch bình luận/trả lời — yêu cầu người dùng: "ưu tiên opensrc để mình làm chủ
- * nhưng giờ dùng tạm gg cho MVP", NHƯNG người dùng không dùng được thẻ thanh
- * toán (Google Cloud bắt buộc thẻ dù free tier) -> mặc định dùng MyMemory (miễn
- * phí, không cần key/thẻ, đã verify thật). Đặt GOOGLE_TRANSLATE_API_KEY nếu sau
- * này có thẻ và muốn chất lượng dịch tốt hơn — không bắt buộc cấu hình gì cả,
- * route /api/live-comment/* vẫn hoạt động với MyMemory mặc định.
+ * Dịch bình luận/trả lời — thứ tự ưu tiên: LLM (chất lượng/nhận diện ngôn ngữ tốt
+ * nhất, verify thật với DeepSeek — MyMemory hay nhận sai ngôn ngữ với câu ngắn/
+ * tiếng lóng TikTok) > Google Cloud Translation (nếu có key, cần thẻ) > MyMemory
+ * (miễn phí, không cần key/thẻ, luôn có sẵn làm phương án cuối).
  */
 function createTranslationProvider(): TranslationProvider {
+  const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
+  if (deepseekApiKey) {
+    return new LLMTranslateProvider(
+      deepseekApiKey,
+      process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
+      process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+    );
+  }
   const googleApiKey = process.env.GOOGLE_TRANSLATE_API_KEY;
   if (googleApiKey) return new GoogleTranslateProvider(googleApiKey);
   return new MyMemoryTranslateProvider(process.env.MYMEMORY_CONTACT_EMAIL);
