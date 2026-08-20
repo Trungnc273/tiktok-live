@@ -25,6 +25,11 @@ import { createSoundActionHandler, ensureBuiltinSounds } from "./modules/audio/i
 import { OBSService, createOBSSceneChangeActionHandler } from "./modules/obs/index.js";
 import { verifyJwtToken } from "./modules/auth/index.js";
 import { LiveSessionManager } from "./modules/live-session/index.js";
+import {
+  GoogleTranslateProvider,
+  MyMemoryTranslateProvider,
+  type TranslationProvider,
+} from "./modules/translation/index.js";
 
 /**
  * Entrypoint multi-tenant (bổ sung sau MVP): server KHÔNG còn tự kết nối 1 phòng
@@ -63,6 +68,20 @@ function createTtsProvider(): TTSProvider {
   return process.platform === "win32" ? new WindowsSapiProvider() : new LinuxEspeakProvider();
 }
 
+/**
+ * Dịch bình luận/trả lời — yêu cầu người dùng: "ưu tiên opensrc để mình làm chủ
+ * nhưng giờ dùng tạm gg cho MVP", NHƯNG người dùng không dùng được thẻ thanh
+ * toán (Google Cloud bắt buộc thẻ dù free tier) -> mặc định dùng MyMemory (miễn
+ * phí, không cần key/thẻ, đã verify thật). Đặt GOOGLE_TRANSLATE_API_KEY nếu sau
+ * này có thẻ và muốn chất lượng dịch tốt hơn — không bắt buộc cấu hình gì cả,
+ * route /api/live-comment/* vẫn hoạt động với MyMemory mặc định.
+ */
+function createTranslationProvider(): TranslationProvider {
+  const googleApiKey = process.env.GOOGLE_TRANSLATE_API_KEY;
+  if (googleApiKey) return new GoogleTranslateProvider(googleApiKey);
+  return new MyMemoryTranslateProvider(process.env.MYMEMORY_CONTACT_EMAIL);
+}
+
 if (!process.env.JWT_SECRET) {
   logger.warn(
     "Không có JWT_SECRET trong .env — dùng secret ngẫu nhiên (đổi sau mỗi lần restart, " +
@@ -84,6 +103,9 @@ const tokenStore = new TokenStore();
 // 1 box gán giá trị SAU khi mọi thứ đã sẵn sàng thay vì cố tái cấu trúc thành 1 vòng
 // import lẫn nhau giữa 3 module).
 const liveSessionManagerBox: { current: LiveSessionManager | null } = { current: null };
+// Cùng lý do (vòng phụ thuộc khởi tạo) — /api/live-comment/* cần OverlayGateway
+// để broadcast audio thật ra overlay, không chỉ trả URL như /api/tts/preview.
+const overlayGatewayBox: { current: OverlayGateway | null } = { current: null };
 
 const handlerRegistry = new HandlerRegistry();
 const obsService = new OBSService();
@@ -139,11 +161,14 @@ async function main(): Promise<void> {
     jwtSecret,
     secureCookie,
     ttsProvider,
+    translationProvider: createTranslationProvider(),
+    overlayGatewayBox,
   });
 
   const overlayGateway = new OverlayGateway(httpApp.server, tokenStore, (token) =>
     verifyJwtToken(jwtSecret, token),
   );
+  overlayGatewayBox.current = overlayGateway;
 
   handlerRegistry.register(
     createTTSActionHandler(ttsProvider, new TTSQueue(), {

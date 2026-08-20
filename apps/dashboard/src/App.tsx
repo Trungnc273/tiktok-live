@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import type { AutomationRule, OverlayMessage } from "@tiktok-live/shared-types";
+import type { AutomationRule, LiveEvent, OverlayMessage } from "@tiktok-live/shared-types";
 import { api, type CreateAutomationInput, type CurrentUser, type StatusResponse } from "./api-client.js";
 import { AutomationsList } from "./AutomationsList.js";
 import { AutomationBuilder } from "./AutomationBuilder.js";
@@ -8,8 +8,11 @@ import { StatusBar } from "./StatusBar.js";
 import { AuthForm } from "./AuthForm.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { AdminPanel } from "./AdminPanel.js";
+import { LiveCommentsPanel, type DisplayedComment } from "./LiveCommentsPanel.js";
 
-type Tab = "status" | "automations" | "admin";
+type Tab = "status" | "comments" | "automations" | "admin";
+
+const MAX_COMMENTS = 30;
 
 export function App() {
   const [user, setUser] = useState<CurrentUser | null | undefined>(undefined); // undefined = đang tải
@@ -17,6 +20,8 @@ export function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [tab, setTab] = useState<Tab>("status");
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
+  const [comments, setComments] = useState<DisplayedComment[]>([]);
+  const seenCommentIds = useRef(new Set<string>());
 
   useEffect(() => {
     api.me().then(setUser).catch(() => setUser(null));
@@ -35,9 +40,26 @@ export function App() {
     // bị ngắt giữa chừng khi đi qua Cloudflare Tunnel (xem ghi chú tương tự ở overlay/App.tsx).
     const socket = io(`${window.location.origin}/dashboard`, { path: "/socket.io", transports: ["websocket"] });
     socket.on("message", (message: OverlayMessage) => {
-      if (message.type === "liveEvent") {
-        api.getStatus().then(setStatus).catch(console.error);
-      }
+      if (message.type !== "liveEvent") return;
+      api.getStatus().then(setStatus).catch(console.error);
+
+      const event = message.data as LiveEvent;
+      if (event.type !== "comment") return;
+      if (seenCommentIds.current.has(event.id)) return; // idempotent — tránh trùng khi reconnect/resync
+      seenCommentIds.current.add(event.id);
+
+      setComments((prev) =>
+        [
+          {
+            id: event.id,
+            nickname: event.user.nickname ?? event.user.username,
+            username: event.user.username,
+            text: event.payload.text,
+            receivedAt: Date.now(),
+          },
+          ...prev,
+        ].slice(0, MAX_COMMENTS),
+      );
     });
 
     return () => {
@@ -87,6 +109,7 @@ export function App() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "status", label: "Trạng thái" },
+    { id: "comments", label: "Bình luận" },
     { id: "automations", label: "Automations" },
     ...(user.role === "admin" ? ([{ id: "admin", label: "Quản trị" }] as const) : []),
   ];
@@ -131,6 +154,16 @@ export function App() {
             <StatusBar status={status} />
             <SettingsPanel user={user} status={status} onUserUpdate={setUser} />
           </>
+        )}
+
+        {tab === "comments" && (
+          <section className="card space-y-3">
+            <h2 className="text-base font-semibold">Bình luận trực tiếp</h2>
+            <p className="text-xs text-text-muted">
+              Bấm "🌐 Đọc & dịch" ở bình luận muốn đọc — chỉ đọc đúng bình luận bạn chọn, không tự động đọc hết.
+            </p>
+            <LiveCommentsPanel comments={comments} />
+          </section>
         )}
 
         {tab === "automations" && (

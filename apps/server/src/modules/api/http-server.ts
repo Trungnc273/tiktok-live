@@ -17,6 +17,8 @@ import { logger } from "../../config/logger.js";
 import { registerAuthPlugin, registerAuthRoutes, registerAdminRoutes } from "../auth/index.js";
 import type { LiveSessionManager } from "../live-session/index.js";
 import type { TTSProvider } from "../tts/index.js";
+import type { TranslationProvider } from "../translation/index.js";
+import type { OverlayGateway } from "../overlay-gateway/index.js";
 import { BUILTIN_SOUNDS } from "../audio/index.js";
 
 export interface HttpServerDeps {
@@ -49,6 +51,13 @@ export interface HttpServerDeps {
   secureCookie?: boolean;
   /** Cho phép "nghe thử" TTS trước khi lưu automation (POST /api/tts/preview) — optional, không có thì route trả 503. */
   ttsProvider?: TTSProvider;
+  /** Dịch bình luận + trả lời (POST /api/live-comment/*) — optional, không có thì route trả 503. */
+  translationProvider?: TranslationProvider;
+  /**
+   * Box giống liveSessionManagerBox — cần OverlayGateway để BROADCAST (không chỉ
+   * trả URL như /api/tts/preview) audio đọc bình luận/trả lời ra overlay thật.
+   */
+  overlayGatewayBox?: { current: OverlayGateway | null };
 }
 
 const createAutomationBodySchema = automationRuleSchema.omit({ id: true, createdAt: true, updatedAt: true });
@@ -114,6 +123,90 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<FastifyIns
       return { error: err instanceof Error ? err.message : "Không tạo được audio nghe thử" };
     }
     return { url: `${deps.publicBaseUrl}/media/${basename(outFilePath)}` };
+  });
+
+  // "Đọc & dịch bình luận" + "Trả lời" (yêu cầu người dùng: streamer tự chọn TỪNG
+  // bình luận cụ thể lúc live để dịch+đọc, và dịch câu trả lời sang ngôn ngữ người
+  // chat rồi đọc lại bằng giọng đúng ngôn ngữ đó — KHÔNG tự động cho mọi comment,
+  // đây là action thủ công 1 lần, không đi qua Automation/Rule Engine.
+  const translateCommentBodySchema = z.object({
+    text: z.string().trim().min(1).max(500),
+    nickname: z.string().trim().max(100).optional(),
+  });
+  app.post("/api/live-comment/translate", { preHandler: app.authenticate }, async (req, reply) => {
+    const parsed = translateCommentBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Nội dung bình luận không hợp lệ (1-500 ký tự)" };
+    }
+    if (!deps.translationProvider || !deps.ttsProvider || !deps.mediaDir) {
+      reply.code(503);
+      return { error: "Chức năng dịch bình luận chưa sẵn sàng (thiếu cấu hình dịch/TTS)" };
+    }
+
+    let translation;
+    try {
+      translation = await deps.translationProvider.translate(parsed.data.text, "vi");
+    } catch (err) {
+      reply.code(502);
+      return { error: err instanceof Error ? err.message : "Dịch thất bại" };
+    }
+
+    const spoken = parsed.data.nickname
+      ? `${parsed.data.nickname} nói: ${translation.translatedText}`
+      : translation.translatedText;
+    const outFilePath = join(deps.mediaDir, `comment-${randomUUID()}.wav`);
+    try {
+      await deps.ttsProvider.synthesizeToFile(spoken, outFilePath, { lang: "vi" });
+    } catch (err) {
+      reply.code(500);
+      return { error: err instanceof Error ? err.message : "Không tạo được audio đọc bình luận" };
+    }
+
+    const url = `${deps.publicBaseUrl}/media/${basename(outFilePath)}`;
+    deps.overlayGatewayBox?.current?.broadcast(req.user.id, "ttsReady", { url });
+
+    return { translatedText: translation.translatedText, detectedSourceLang: translation.detectedSourceLang, url };
+  });
+
+  const replyCommentBodySchema = z.object({
+    text: z.string().trim().min(1).max(500),
+    targetLang: z.string().trim().min(2).max(10),
+  });
+  app.post("/api/live-comment/reply", { preHandler: app.authenticate }, async (req, reply) => {
+    const parsed = replyCommentBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Nội dung trả lời không hợp lệ (1-500 ký tự)" };
+    }
+    if (!deps.translationProvider || !deps.ttsProvider || !deps.mediaDir) {
+      reply.code(503);
+      return { error: "Chức năng trả lời chưa sẵn sàng (thiếu cấu hình dịch/TTS)" };
+    }
+
+    let translation;
+    try {
+      // source="vi" cố định — người dùng luôn gõ trả lời bằng tiếng Việt (theo yêu cầu).
+      translation = await deps.translationProvider.translate(parsed.data.text, parsed.data.targetLang, "vi");
+    } catch (err) {
+      reply.code(502);
+      return { error: err instanceof Error ? err.message : "Dịch thất bại" };
+    }
+
+    const outFilePath = join(deps.mediaDir, `reply-${randomUUID()}.wav`);
+    try {
+      await deps.ttsProvider.synthesizeToFile(translation.translatedText, outFilePath, {
+        lang: parsed.data.targetLang,
+      });
+    } catch (err) {
+      reply.code(500);
+      return { error: err instanceof Error ? err.message : "Không tạo được audio đọc trả lời" };
+    }
+
+    const url = `${deps.publicBaseUrl}/media/${basename(outFilePath)}`;
+    deps.overlayGatewayBox?.current?.broadcast(req.user.id, "ttsReady", { url });
+
+    return { translatedText: translation.translatedText, url };
   });
 
   app.post("/api/overlays", { preHandler: app.authenticate }, async (req) => {

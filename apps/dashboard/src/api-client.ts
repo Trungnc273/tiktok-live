@@ -108,6 +108,21 @@ export const api = {
   duplicateAutomation: (id: string) =>
     fetch(`/api/automations/${id}/duplicate`, { method: "POST" }).then((r) => json<AutomationRule>(r)),
 
+  // --- Đọc/dịch bình luận lúc live (streamer tự chọn từng bình luận) ---
+  translateComment: (text: string, nickname?: string) =>
+    fetch("/api/live-comment/translate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, nickname }),
+    }).then((r) => json<{ translatedText: string; detectedSourceLang: string; url: string }>(r)),
+
+  replyComment: (text: string, targetLang: string) =>
+    fetch("/api/live-comment/reply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, targetLang }),
+    }).then((r) => json<{ translatedText: string; url: string }>(r)),
+
   // --- Nghe thử TTS trước khi lưu automation ---
   previewTts: (text: string, lang?: string) =>
     fetch("/api/tts/preview", {
