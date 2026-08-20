@@ -2,6 +2,8 @@ export type { TTSProvider } from "./provider.js";
 export { WindowsSapiProvider } from "./windows-sapi-provider.js";
 export { LinuxEspeakProvider, type LinuxEspeakProviderOptions } from "./linux-espeak-provider.js";
 export { PiperTTSProvider, type PiperTTSProviderOptions } from "./piper-tts-provider.js";
+export { FptTTSProvider } from "./fpt-tts-provider.js";
+export { HybridTTSProvider } from "./hybrid-tts-provider.js";
 export { MockTTSProvider, type MockProviderCall } from "./mock-provider.js";
 export { renderTemplate, type RenderResult } from "./template.js";
 export { buildTemplateVariables } from "./template-variables.js";

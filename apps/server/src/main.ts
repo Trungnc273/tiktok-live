@@ -18,6 +18,8 @@ import {
   WindowsSapiProvider,
   LinuxEspeakProvider,
   PiperTTSProvider,
+  FptTTSProvider,
+  HybridTTSProvider,
   MockTTSProvider,
   TTSQueue,
   type TTSProvider,
@@ -56,14 +58,21 @@ const secureCookie = process.env.NODE_ENV === "production";
 // TikTok thật đang live cùng lúc.
 const useMockProvider = process.env.MOCK_TIKTOK === "1";
 
+/** Provider "phụ" (ngôn ngữ khác tiếng Việt) dùng chung cho các nhánh cần fallback — theo OS thật. */
+function createFallbackTtsProvider(): TTSProvider {
+  return process.platform === "win32" ? new WindowsSapiProvider() : new LinuxEspeakProvider();
+}
+
 /**
- * Chọn TTS provider theo hệ điều hành thật (không cần cấu hình thủ công) — có thể
- * override bằng TTS_PROVIDER=windows|linux|piper|mock. WindowsSapiProvider verify
- * thật ở M06 (audio thật 141-240KB). LinuxEspeakProvider verify thật bằng Docker
- * container Node.js Linux (audio thật 174KB, tiếng Việt có dấu) — xem docs/reports.
- * PiperTTSProvider (yêu cầu người dùng: "vừa nhanh lại phải đảm bảo nói ngôn ngữ
- * chuẩn") — giọng neural, tự nhiên hơn hẳn 2 provider trên, cần cài `piper` +
- * model .onnx riêng (không tự bundle, đặt PIPER_BINARY_PATH/PIPER_VI_MODEL_PATH).
+ * Chọn TTS provider — override bằng TTS_PROVIDER=windows|linux|piper|fpt|mock,
+ * không đặt thì tự chọn theo OS (WindowsSapiProvider/LinuxEspeakProvider).
+ *
+ * fpt (yêu cầu người dùng: "muốn tiếng Việt... không dùng giống giọng ở phần
+ * auto à?" — SAPI không có giọng Việt trên VPS này, espeak-ng phát âm đúng
+ * nhưng robot, Piper không chạy được do giới hạn OS) — dùng FptTTSProvider
+ * (dịch vụ Việt Nam, giọng tự nhiên, verify thật) cho tiếng Việt, kết hợp
+ * qua HybridTTSProvider với provider theo OS cho các ngôn ngữ khác (trả lời
+ * bình luận nước ngoài — FPT chỉ có giọng tiếng Việt).
  */
 function createTtsProvider(): TTSProvider {
   const override = process.env.TTS_PROVIDER;
@@ -80,7 +89,16 @@ function createTtsProvider(): TTSProvider {
     }
     return new PiperTTSProvider({ binaryPath, modelPaths: { vi: viModelPath }, defaultLang: "vi" });
   }
-  return process.platform === "win32" ? new WindowsSapiProvider() : new LinuxEspeakProvider();
+  if (override === "fpt") {
+    const fptApiKey = process.env.FPT_TTS_API_KEY;
+    if (!fptApiKey) throw new Error("TTS_PROVIDER=fpt nhưng thiếu FPT_TTS_API_KEY trong .env");
+    return new HybridTTSProvider(
+      new FptTTSProvider(fptApiKey, process.env.FPT_TTS_VOICE ?? "banmai"),
+      createFallbackTtsProvider(),
+      "vi",
+    );
+  }
+  return createFallbackTtsProvider();
 }
 
 /**
